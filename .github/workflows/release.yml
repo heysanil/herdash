@@ -1,0 +1,191 @@
+# Tag-driven release.
+#
+#   git tag -a v1.2.3 -m "herdash v1.2.3" && git push origin v1.2.3
+#
+# The tag is the trigger and the single source of truth for the version; the
+# first job refuses to continue unless Cargo.toml agrees with it, so a
+# mistagged release fails in seconds rather than shipping a binary that reports
+# the wrong version.
+#
+# Runs on Namespace runners. Note macOS is arm64-only there, so the Intel build
+# cross-compiles from Apple Silicon (verified: aws-lc-rs builds cleanly that
+# way).
+#
+# See docs/releasing.md for the human/agent procedure and the semver policy.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*" # pre-releases, e.g. v0.2.0-rc.1
+
+permissions:
+  contents: read
+
+# Releases must never race each other.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: verify tag and test
+    runs-on:
+      - nscloud-ubuntu-24.04-amd64-8x16-with-cache
+      - nscloud-cache-tag-herdash-rust
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: namespacelabs/nscloud-cache-action@v1
+        with:
+          cache: |
+            rust
+            mise
+      - uses: jdx/mise-action@v4
+
+      - name: Tag must match Cargo.toml
+        id: version
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          crate="$(mise exec -- cargo metadata --format-version 1 --no-deps \
+            | jq -r '.packages[0].version')"
+          if [ "$tag" != "$crate" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} implies version ${tag}, but Cargo.toml says ${crate}"
+            exit 1
+          fi
+          echo "version=${tag}" >> "$GITHUB_OUTPUT"
+          # Anything with a pre-release suffix is marked as such on the release.
+          case "$tag" in
+            *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
+            *)   echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: fmt --check, clippy -D warnings, tests
+        run: mise run check
+
+  build:
+    name: ${{ matrix.target }}
+    needs: verify
+    runs-on: ${{ fromJSON(matrix.runner) }}
+    strategy:
+      # One target failing should not hide whether the others are healthy.
+      fail-fast: false
+      matrix:
+        include:
+          # Built on 22.04 deliberately: linking against the older glibc keeps
+          # the binary usable on distributions newer runners would exclude.
+          - target: x86_64-unknown-linux-gnu
+            runner: '["nscloud-ubuntu-22.04-amd64-8x16-with-cache","nscloud-cache-tag-herdash-linux-amd64"]'
+          - target: aarch64-unknown-linux-gnu
+            runner: '["nscloud-ubuntu-22.04-arm64-8x16-with-cache","nscloud-cache-tag-herdash-linux-arm64"]'
+          - target: aarch64-apple-darwin
+            runner: '["nscloud-macos-sonoma-arm64-6x14"]'
+          # Namespace macOS runners are arm64 only, so this one cross-compiles.
+          - target: x86_64-apple-darwin
+            runner: '["nscloud-macos-sonoma-arm64-6x14"]'
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Mount cache volume
+        if: runner.os == 'Linux'
+        uses: namespacelabs/nscloud-cache-action@v1
+        with:
+          cache: |
+            rust
+            mise
+
+      - uses: jdx/mise-action@v4
+
+      - name: Add target
+        run: mise exec -- rustup target add ${{ matrix.target }}
+
+      - name: Build
+        run: mise exec -- cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          name="herdash-v${{ needs.verify.outputs.version }}-${{ matrix.target }}"
+          mkdir -p "dist/${name}"
+          cp "target/${{ matrix.target }}/release/herdash" "dist/${name}/"
+          cp README.md LICENSE "dist/${name}/"
+          tar -czf "dist/${name}.tar.gz" -C dist "${name}"
+          rm -rf "dist/${name}"
+          ls -l dist
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: herdash-${{ matrix.target }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: publish release
+    needs: [verify, build]
+    runs-on:
+      - nscloud-ubuntu-24.04-amd64-4x8
+    permissions:
+      # The only job that needs write access.
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum ./*.tar.gz | sed 's|\./||' > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          flags=(--verify-tag --generate-notes --title "herdash ${GITHUB_REF_NAME}")
+          if [ "${{ needs.verify.outputs.prerelease }}" = "true" ]; then
+            flags+=(--prerelease)
+          fi
+          gh release create "${GITHUB_REF_NAME}" dist/*.tar.gz dist/SHA256SUMS "${flags[@]}"
+
+      # Prepend install instructions to GitHub's generated changelog. Done as a
+      # second step because `gh release create` accepts either generated notes
+      # or a notes file, not both.
+      - name: Prepend install instructions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          generated="$(gh release view "${GITHUB_REF_NAME}" --json body --jq .body)"
+          {
+            echo "## Install"
+            echo
+            echo '```sh'
+            echo "curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/install.sh | sh"
+            echo '```'
+            echo
+            echo "Or pin this version:"
+            echo
+            echo '```sh'
+            echo "curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/install.sh | HERDASH_VERSION=${GITHUB_REF_NAME} sh"
+            echo '```'
+            echo
+            echo "Checksums are in \`SHA256SUMS\`; the installer verifies them automatically."
+            echo
+            echo "$generated"
+          } > notes.md
+          gh release edit "${GITHUB_REF_NAME}" --notes-file notes.md

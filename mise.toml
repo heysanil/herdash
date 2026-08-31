@@ -24,3 +24,11 @@ run = [
   "cargo clippy --all-targets -- -D warnings",
   "cargo test --all-targets",
 ]
+
+[tasks.release]
+description = "Prepare a release commit and tag (does not push). Usage: mise run release 0.2.0"
+run = "./scripts/release.sh"
+
+[tasks.lint-ci]
+description = "Lint GitHub workflows and shell scripts"
+run = ["actionlint", "shellcheck -s sh install.sh", "shellcheck scripts/release.sh"]

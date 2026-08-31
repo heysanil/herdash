@@ -1,0 +1,71 @@
+# Continuous integration.
+#
+# Runs on Namespace (https://namespace.so) rather than GitHub-hosted runners.
+# The `nscloud-{os}-{arch}-{shape}` label selects the machine; `-with-cache`
+# attaches a cache volume that `nscloud-cache-action` then links Cargo and mise
+# into, which is what keeps a cold Rust build from dominating every run.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A newer push to the same ref makes the older run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: fmt, clippy, tests
+    runs-on:
+      - nscloud-ubuntu-24.04-amd64-8x16-with-cache
+      - nscloud-cache-tag-herdash-rust
+    steps:
+      - uses: actions/checkout@v7
+
+      # Must precede mise, so the toolchain install lands on the cache volume.
+      - name: Mount cache volume
+        uses: namespacelabs/nscloud-cache-action@v1
+        with:
+          cache: |
+            rust
+            mise
+
+      - name: Install pinned toolchain
+        uses: jdx/mise-action@v4
+
+      # The same task contributors run locally, so CI cannot drift from it.
+      - name: fmt --check, clippy -D warnings, tests
+        run: mise run check
+
+  build:
+    name: release build
+    runs-on:
+      - nscloud-ubuntu-24.04-amd64-8x16-with-cache
+      - nscloud-cache-tag-herdash-rust
+    steps:
+      - uses: actions/checkout@v7
+      - uses: namespacelabs/nscloud-cache-action@v1
+        with:
+          cache: |
+            rust
+            mise
+      - uses: jdx/mise-action@v4
+
+      # Catches optimised-build-only breakage before a tag depends on it.
+      - name: Build
+        run: mise exec -- cargo build --release --locked
+
+      - name: Smoke test the binary
+        run: |
+          ./target/release/herdash --version
+          ./target/release/herdash --help > /dev/null

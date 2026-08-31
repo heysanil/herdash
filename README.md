@@ -47,6 +47,22 @@ it is doing now, and what it recently finished.
 
 ## Install
 
+```sh
+curl -fsSL https://raw.githubusercontent.com/heysanil/herdash/main/install.sh | sh
+```
+
+Installs the latest release binary into `~/.local/bin`, verifying it against
+the release's `SHA256SUMS` first. Set `HERDASH_VERSION` to pin a version and
+`HERDASH_INSTALL_DIR` to install elsewhere:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/heysanil/herdash/main/install.sh \
+  | HERDASH_VERSION=v0.1.0 HERDASH_INSTALL_DIR=/usr/local/bin sh
+```
+
+Builds are published for macOS (Apple Silicon and Intel) and Linux (x86_64 and
+aarch64). To build from source instead:
+
 ```bash
 mise install
 mise exec -- cargo install --path .
@@ -210,10 +226,14 @@ See [AGENTS.md](AGENTS.md) for repository conventions and the herdr API
 gotchas worth knowing before changing the client.
 
 ```bash
-mise run check   # fmt --check + clippy -D warnings + all tests
+mise run check     # fmt --check + clippy -D warnings + all tests
+mise run lint-ci   # actionlint + shellcheck
 ```
 
 Every test runs without a herdr server and without network access.
+
+Releases are tag-driven and build on [Namespace](https://namespace.so) runners;
+see [docs/releasing.md](docs/releasing.md) for the semver policy and procedure.
 
 ## License
 

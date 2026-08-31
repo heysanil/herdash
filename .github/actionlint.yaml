@@ -1,0 +1,18 @@
+# Namespace (https://namespace.so) runner labels are self-hosted labels, so
+# actionlint cannot know them. Declaring them here keeps `actionlint` useful
+# for everything else and doubles as the list of shapes this repo may use.
+#
+# Grammar: nscloud-{os}-{arch}-{shape}[-with-cache]
+#   ubuntu  -> amd64 | arm64, shapes 2x4 4x8 8x16 16x32 32x64
+#   macos   -> arm64 only, shapes 6x14 12x28 12x56
+# Companion labels (cache tag/size) are separate entries in `runs-on`.
+self-hosted-runner:
+  labels:
+    - nscloud-ubuntu-24.04-amd64-4x8
+    - nscloud-ubuntu-24.04-amd64-8x16-with-cache
+    - nscloud-ubuntu-22.04-amd64-8x16-with-cache
+    - nscloud-ubuntu-22.04-arm64-8x16-with-cache
+    - nscloud-macos-sonoma-arm64-6x14
+    - nscloud-cache-tag-herdash-rust
+    - nscloud-cache-tag-herdash-linux-amd64
+    - nscloud-cache-tag-herdash-linux-arm64
