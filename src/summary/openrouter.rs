@@ -119,12 +119,18 @@ impl ReasoningMode {
     }
 }
 
+/// The `reasoning` request field for a mode, if any.
+pub fn reasoning_field(mode: ReasoningMode) -> Option<Value> {
+    mode.field()
+}
+
 /// True when the failure is a provider refusing this reasoning mode, rather
 /// than a real error worth surfacing.
 pub fn is_reasoning_rejection(message: &str) -> bool {
     let m = message.to_ascii_lowercase();
     m.contains("reasoning is mandatory")
-        || (m.contains("reasoning") && (m.contains("cannot be disabled") || m.contains("not supported")))
+        || (m.contains("reasoning")
+            && (m.contains("cannot be disabled") || m.contains("not supported")))
 }
 
 /// Request body for one agent summary, demanding a strict JSON schema.
@@ -133,11 +139,7 @@ pub fn agent_request_body(model: &str, transcript: &str) -> Value {
 }
 
 /// As [`agent_request_body`], with an explicit reasoning mode.
-pub fn agent_request_body_with(
-    model: &str,
-    transcript: &str,
-    reasoning: ReasoningMode,
-) -> Value {
+pub fn agent_request_body_with(model: &str, transcript: &str, reasoning: ReasoningMode) -> Value {
     let mut body = agent_body_inner(model, transcript);
     if let Some(field) = reasoning.field() {
         body["reasoning"] = field;
@@ -236,6 +238,9 @@ pub struct OpenRouter {
     client: reqwest::Client,
     api_key: String,
     model: String,
+    /// Overridable so tests can point at a local stub and assert the
+    /// escalation sequence — the reason this is not a `const`.
+    endpoint: String,
     /// Cached [`ReasoningMode`], escalated once if the provider rejects the
     /// cheapest form. Stored as an index so it can be shared without a lock.
     reasoning: std::sync::atomic::AtomicU8,
@@ -251,8 +256,15 @@ impl OpenRouter {
             client,
             api_key,
             model,
+            endpoint: ENDPOINT.to_string(),
             reasoning: std::sync::atomic::AtomicU8::new(0),
         }
+    }
+
+    /// Point the client at a different completions endpoint.
+    pub fn with_endpoint(mut self, endpoint: impl Into<String>) -> Self {
+        self.endpoint = endpoint.into();
+        self
     }
 
     fn reasoning_mode(&self) -> ReasoningMode {
@@ -269,13 +281,14 @@ impl OpenRouter {
             ReasoningMode::LowEffort => 1,
             ReasoningMode::ProviderDefault => 2,
         };
-        self.reasoning.store(index, std::sync::atomic::Ordering::Relaxed);
+        self.reasoning
+            .store(index, std::sync::atomic::Ordering::Relaxed);
     }
 
     async fn post(&self, body: Value) -> Result<String> {
         let resp = self
             .client
-            .post(ENDPOINT)
+            .post(&self.endpoint)
             .bearer_auth(&self.api_key)
             .json(&body)
             .send()
@@ -302,16 +315,44 @@ impl OpenRouter {
 #[async_trait]
 impl Summarizer for OpenRouter {
     async fn summarize_agent(&self, transcript: &str) -> Result<AgentSummary> {
-        let body = self
-            .post(agent_request_body(&self.model, transcript))
-            .await?;
-        parse_agent_response(&body)
+        // Start at the cheapest reasoning mode and escalate only if this
+        // provider explicitly refuses it, then remember the answer so the rest
+        // of the session pays for one extra round trip rather than every call.
+        let mut mode = self.reasoning_mode();
+        loop {
+            let body = agent_request_body_with(&self.model, transcript, mode);
+            match self.post(body).await {
+                Ok(text) => return parse_agent_response(&text),
+                Err(err) if is_reasoning_rejection(&err.to_string()) => {
+                    let Some(next) = mode.escalate() else {
+                        return Err(err);
+                    };
+                    mode = next;
+                    self.set_reasoning_mode(next);
+                }
+                Err(err) => return Err(err),
+            }
+        }
     }
 
     async fn summarize_fleet(&self, headlines: &[String]) -> Result<String> {
-        let body = self
-            .post(fleet_request_body(&self.model, headlines))
-            .await?;
-        parse_fleet_response(&body)
+        let mut mode = self.reasoning_mode();
+        loop {
+            let mut body = fleet_request_body(&self.model, headlines);
+            if let Some(field) = reasoning_field(mode) {
+                body["reasoning"] = field;
+            }
+            match self.post(body).await {
+                Ok(text) => return parse_fleet_response(&text),
+                Err(err) if is_reasoning_rejection(&err.to_string()) => {
+                    let Some(next) = mode.escalate() else {
+                        return Err(err);
+                    };
+                    mode = next;
+                    self.set_reasoning_mode(next);
+                }
+                Err(err) => return Err(err),
+            }
+        }
     }
 }

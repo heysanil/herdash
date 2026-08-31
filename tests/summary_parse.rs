@@ -284,10 +284,18 @@ fn the_default_body_asks_for_no_reasoning() {
 #[test]
 fn each_reasoning_mode_produces_the_right_field() {
     use herdash::summary::openrouter::{ReasoningMode as M, agent_request_body_with};
-    assert_eq!(agent_request_body_with("m", "t", M::Disabled)["reasoning"]["enabled"], false);
-    assert_eq!(agent_request_body_with("m", "t", M::LowEffort)["reasoning"]["effort"], "low");
+    assert_eq!(
+        agent_request_body_with("m", "t", M::Disabled)["reasoning"]["enabled"],
+        false
+    );
+    assert_eq!(
+        agent_request_body_with("m", "t", M::LowEffort)["reasoning"]["effort"],
+        "low"
+    );
     assert!(
-        agent_request_body_with("m", "t", M::ProviderDefault).get("reasoning").is_none(),
+        agent_request_body_with("m", "t", M::ProviderDefault)
+            .get("reasoning")
+            .is_none(),
         "the default sends no field at all"
     );
 }
@@ -297,8 +305,14 @@ fn each_reasoning_mode_produces_the_right_field() {
 #[test]
 fn only_reasoning_refusals_are_treated_as_escalation_signals() {
     use herdash::summary::openrouter::is_reasoning_rejection;
-    assert!(is_reasoning_rejection("Reasoning is mandatory for this endpoint and cannot be disabled."));
-    assert!(is_reasoning_rejection("reasoning cannot be disabled for this model"));
+    assert!(is_reasoning_rejection(
+        "Reasoning is mandatory for this endpoint and cannot be disabled."
+    ));
+    assert!(is_reasoning_rejection(
+        "reasoning cannot be disabled for this model"
+    ));
     assert!(!is_reasoning_rejection("rate limited"));
-    assert!(!is_reasoning_rejection("model did not return the requested schema"));
+    assert!(!is_reasoning_rejection(
+        "model did not return the requested schema"
+    ));
 }

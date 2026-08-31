@@ -46,9 +46,9 @@ fn build(app: &App, width: usize, now: Instant) -> Rendered {
     let mut selected_end: Option<usize> = None;
 
     let push = |line: Line<'static>,
-                    owner: Option<String>,
-                    lines: &mut Vec<Line<'static>>,
-                    owners: &mut Vec<Option<String>>| {
+                owner: Option<String>,
+                lines: &mut Vec<Line<'static>>,
+                owners: &mut Vec<Option<String>>| {
         lines.push(line);
         owners.push(owner);
     };

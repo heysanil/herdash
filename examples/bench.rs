@@ -36,7 +36,10 @@ async fn main() -> anyhow::Result<()> {
 
     let key = std::env::var("OPENROUTER_API_KEY").ok().or_else(|| {
         std::fs::read_to_string(
-            std::env::var("HOME").map(PathBuf::from).unwrap().join(".openrouter-key"),
+            std::env::var("HOME")
+                .map(PathBuf::from)
+                .unwrap()
+                .join(".openrouter-key"),
         )
         .ok()
         .map(|s| s.trim().to_string())
@@ -52,9 +55,15 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     transcripts.sort();
-    eprintln!("{} transcripts, {} models, {runs} runs each", transcripts.len(), MODELS.len());
+    eprintln!(
+        "{} transcripts, {} models, {runs} runs each",
+        transcripts.len(),
+        MODELS.len()
+    );
 
-    let client = reqwest::Client::builder().timeout(Duration::from_secs(180)).build()?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(180))
+        .build()?;
 
     // Models run concurrently, transcripts sequentially within a model, so a
     // slow provider cannot distort another model's latency measurements.
@@ -80,8 +89,10 @@ async fn main() -> anyhow::Result<()> {
     while let Some(res) = set.join_next().await {
         all.extend(res?);
     }
-    let body: String =
-        all.iter().map(|r| format!("{}\n", serde_json::to_string(r).unwrap())).collect();
+    let body: String = all
+        .iter()
+        .map(|r| format!("{}\n", serde_json::to_string(r).unwrap()))
+        .collect();
     std::fs::write(&out_path, body)?;
     eprintln!("wrote {} records to {}", all.len(), out_path.display());
     Ok(())
@@ -105,7 +116,12 @@ async fn one_call(
         attempts += 1;
         let body = agent_request_body_with(model, text, mode);
         let started = Instant::now();
-        let resp = client.post(ENDPOINT).bearer_auth(key).json(&body).send().await;
+        let resp = client
+            .post(ENDPOINT)
+            .bearer_auth(key)
+            .json(&body)
+            .send()
+            .await;
         total_latency += started.elapsed().as_millis() as u64;
 
         let mut rec = json!({
@@ -140,7 +156,10 @@ async fn one_call(
         };
 
         if let Some(err) = parsed.get("error") {
-            let message = err.get("message").and_then(|m| m.as_str()).unwrap_or("error");
+            let message = err
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("error");
             if is_reasoning_rejection(message)
                 && let Some(next) = mode.escalate()
             {
@@ -156,14 +175,22 @@ async fn one_call(
         rec["finish_reason"] = parsed["choices"][0]["finish_reason"].clone();
         if let Some(usage) = parsed.get("usage") {
             rec["prompt_tokens"] = usage.get("prompt_tokens").cloned().unwrap_or(Value::Null);
-            rec["completion_tokens"] =
-                usage.get("completion_tokens").cloned().unwrap_or(Value::Null);
+            rec["completion_tokens"] = usage
+                .get("completion_tokens")
+                .cloned()
+                .unwrap_or(Value::Null);
             rec["cost"] = usage.get("cost").cloned().unwrap_or(Value::Null);
         }
-        rec["reasoning_chars"] =
-            json!(parsed["choices"][0]["message"]["reasoning"].as_str().unwrap_or("").len());
+        rec["reasoning_chars"] = json!(
+            parsed["choices"][0]["message"]["reasoning"]
+                .as_str()
+                .unwrap_or("")
+                .len()
+        );
 
-        let content = parsed["choices"][0]["message"]["content"].as_str().unwrap_or_default();
+        let content = parsed["choices"][0]["message"]["content"]
+            .as_str()
+            .unwrap_or_default();
         rec["raw"] = json!(content);
 
         // Compliance is judged by the shipped parser, not a looser one.
