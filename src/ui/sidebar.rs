@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
@@ -19,15 +19,115 @@ const HEADLINE_LINES: usize = 2;
 /// Braille spinner frames for the in-flight indicator.
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-pub fn render(frame: &mut Frame, area: Rect, app: &App) {
+/// The sidebar's line buffer, plus which agent owns each line.
+///
+/// Built once and used by both rendering and mouse hit-testing, so a click
+/// can never resolve to a different row than the one drawn.
+struct Rendered {
+    lines: Vec<Line<'static>>,
+    /// Parallel to `lines`: the pane id each line belongs to, if any.
+    owners: Vec<Option<String>>,
+    selected_start: Option<usize>,
+    selected_end: Option<usize>,
+}
+
+fn inner_area(area: Rect, show_divider: bool) -> Rect {
+    if show_divider {
+        Block::default().borders(Borders::RIGHT).inner(area)
+    } else {
+        area
+    }
+}
+
+fn build(app: &App, width: usize, now: Instant) -> Rendered {
+    let mut lines: Vec<Line> = Vec::new();
+    let mut owners: Vec<Option<String>> = Vec::new();
+    let mut selected_start: Option<usize> = None;
+    let mut selected_end: Option<usize> = None;
+
+    let push = |line: Line<'static>,
+                    owner: Option<String>,
+                    lines: &mut Vec<Line<'static>>,
+                    owners: &mut Vec<Option<String>>| {
+        lines.push(line);
+        owners.push(owner);
+    };
+
+    for row in app.rows() {
+        match row {
+            Row::AttentionHeader(count) => {
+                push(
+                    attention_header(count, width),
+                    None,
+                    &mut lines,
+                    &mut owners,
+                );
+            }
+            Row::Group(g, shown) => {
+                if !lines.is_empty() {
+                    push(Line::from(""), None, &mut lines, &mut owners);
+                }
+                push(
+                    group_header(g.name(), shown, width),
+                    None,
+                    &mut lines,
+                    &mut owners,
+                );
+            }
+            Row::Agent(a) => {
+                let is_selected = app.selected.as_deref() == Some(a.pane_id.as_str());
+                if is_selected {
+                    selected_start = Some(lines.len());
+                }
+                let id = Some(a.pane_id.clone());
+                push(
+                    agent_row(a, width, now, is_selected),
+                    id.clone(),
+                    &mut lines,
+                    &mut owners,
+                );
+                // An agent waiting on the user leads with what it wants,
+                // because that is the only thing the reader needs to act on.
+                if let Some(reason) = app.attention_reason(a) {
+                    for (i, l) in wrap_to(reason, width.saturating_sub(4), 2)
+                        .into_iter()
+                        .enumerate()
+                    {
+                        let prefix = if i == 0 { "  → " } else { "    " };
+                        let line = Line::from(Span::styled(format!("{prefix}{l}"), theme::alert()));
+                        push(line, id.clone(), &mut lines, &mut owners);
+                    }
+                } else {
+                    for l in secondary(app, a, width.saturating_sub(2)) {
+                        let line = Line::from(Span::styled(format!("  {l}"), theme::dim()));
+                        push(line, id.clone(), &mut lines, &mut owners);
+                    }
+                }
+                if is_selected {
+                    selected_end = Some(lines.len());
+                }
+            }
+        }
+    }
+    Rendered {
+        lines,
+        owners,
+        selected_start,
+        selected_end,
+    }
+}
+
+pub fn render(frame: &mut Frame, area: Rect, app: &App, show_divider: bool) {
     if area.width == 0 || area.height == 0 {
         return;
     }
-    let block = Block::default()
-        .borders(Borders::RIGHT)
-        .border_style(theme::dim());
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let inner = inner_area(area, show_divider);
+    if show_divider {
+        let block = Block::default()
+            .borders(Borders::RIGHT)
+            .border_style(theme::dim());
+        frame.render_widget(block, area);
+    }
     if inner.width == 0 || inner.height == 0 {
         return;
     }
@@ -42,54 +142,69 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    let width = inner.width as usize;
-    let now = Instant::now();
-    let mut lines: Vec<Line> = Vec::new();
-    // The selected agent occupies a *block* — its identity row plus headline
-    // rows — and scrolling must keep the identity row itself visible.
-    let mut selected_start: Option<usize> = None;
-    let mut selected_end: Option<usize> = None;
-
-    for row in app.rows() {
-        match row {
-            Row::Group(g) => {
-                if !lines.is_empty() {
-                    lines.push(Line::from(""));
-                }
-                lines.push(group_header(g.name(), g.agents.len(), width));
-            }
-            Row::Agent(a) => {
-                let is_selected = app.selected.as_deref() == Some(a.pane_id.as_str());
-                if is_selected {
-                    selected_start = Some(lines.len());
-                }
-                lines.push(agent_row(a, width, now, is_selected));
-                for l in secondary(app, a, width.saturating_sub(2)) {
-                    lines.push(Line::from(Span::styled(format!("  {l}"), theme::dim())));
-                }
-                if is_selected {
-                    selected_end = Some(lines.len());
-                }
-            }
-        }
-    }
-
+    let r = build(app, inner.width as usize, Instant::now());
     let scroll = scroll_offset(
-        selected_start,
-        selected_end,
-        lines.len(),
+        r.selected_start,
+        r.selected_end,
+        r.lines.len(),
         inner.height as usize,
     );
-    frame.render_widget(Paragraph::new(lines).scroll((scroll as u16, 0)), inner);
+    frame.render_widget(Paragraph::new(r.lines).scroll((scroll as u16, 0)), inner);
+}
+
+/// Which agent, if any, sits under this screen position.
+pub fn agent_at(
+    app: &App,
+    area: Rect,
+    show_divider: bool,
+    column: u16,
+    row: u16,
+) -> Option<String> {
+    if app.groups.is_empty() {
+        return None;
+    }
+    let inner = inner_area(area, show_divider);
+    if column < inner.x || column >= inner.x.saturating_add(inner.width) {
+        return None;
+    }
+    if row < inner.y || row >= inner.y.saturating_add(inner.height) {
+        return None;
+    }
+    let r = build(app, inner.width as usize, Instant::now());
+    let scroll = scroll_offset(
+        r.selected_start,
+        r.selected_end,
+        r.lines.len(),
+        inner.height as usize,
+    );
+    let index = (row - inner.y) as usize + scroll;
+    r.owners.get(index).cloned().flatten()
+}
+
+/// `⚠ waiting on you ───────── 2`
+fn attention_header(count: usize, width: usize) -> Line<'static> {
+    let label = "⚠ waiting on you";
+    let count_s = count.to_string();
+    let used = display_width(label) + display_width(&count_s) + 2;
+    let rule = "─".repeat(width.saturating_sub(used).max(1));
+    Line::from(vec![
+        Span::styled(label, theme::alert().add_modifier(Modifier::BOLD)),
+        Span::styled(format!(" {rule} "), theme::dim()),
+        Span::styled(count_s, theme::alert()),
+    ])
 }
 
 /// `alpha ─────────────── 2`
 fn group_header(name: &str, count: usize, width: usize) -> Line<'static> {
     let count_s = count.to_string();
-    let used = display_width(name) + display_width(&count_s) + 2;
+    // Reserve the count and at least a stub rule, then fit the name into
+    // whatever remains — a long repo name must not clip the count away.
+    let reserved = display_width(&count_s) + 4;
+    let name = truncate_to_width(name, width.saturating_sub(reserved).max(1));
+    let used = display_width(&name) + display_width(&count_s) + 2;
     let rule = "─".repeat(width.saturating_sub(used).max(1));
     Line::from(vec![
-        Span::styled(name.to_string(), theme::heading()),
+        Span::styled(name, theme::heading()),
         Span::styled(format!(" {rule} "), theme::dim()),
         Span::styled(count_s, theme::dim()),
     ])
@@ -132,11 +247,20 @@ fn agent_row(a: &Agent, width: usize, now: Instant, selected: bool) -> Line<'sta
 fn secondary(app: &App, a: &Agent, width: usize) -> Vec<String> {
     if let Some(slot) = app.slots.get(&a.pane_id) {
         if let Some(err) = &slot.error {
-            return wrap_to(
-                &format!("⚠ summary unavailable — {err}"),
-                width,
-                HEADLINE_LINES,
-            );
+            // Keep the last good headline visible; the error annotates it
+            // rather than replacing it, because stale detail beats none.
+            return match &slot.summary {
+                Some(summary) => {
+                    let mut out = wrap_to(&summary.headline, width, 1);
+                    out.extend(wrap_to(&format!("⚠ {err}"), width, 1));
+                    out
+                }
+                None => wrap_to(
+                    &format!("⚠ summary unavailable — {err}"),
+                    width,
+                    HEADLINE_LINES,
+                ),
+            };
         }
         if slot.state.in_flight {
             let frame = SPINNER[(app.tick as usize) % SPINNER.len()];

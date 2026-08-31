@@ -31,9 +31,11 @@ pub enum Update {
     Notice(String),
     Summary {
         pane_id: String,
-        /// Revision the transcript was actually read at.
+        /// Snapshot revision this attempt was dispatched for.
         revision: u64,
-        result: Result<AgentSummary, String>,
+        /// `Ok(None)` means the pane had nothing worth summarising — a normal
+        /// outcome, not a failure, so it must not trigger error backoff.
+        result: Result<Option<AgentSummary>, String>,
     },
     Fleet {
         /// Hash of the headlines this call was made from.
@@ -46,6 +48,9 @@ pub enum Update {
 #[derive(Debug, Default, Clone)]
 pub struct FleetJob {
     pub in_flight: bool,
+    /// Hash of the request currently in flight, so a response that arrives
+    /// after the fleet has moved on can be discarded rather than displayed.
+    pub active_hash: Option<u64>,
     pub last_attempt: Option<Instant>,
     /// Hash of the headlines that produced the *current* summary. Only a
     /// success commits here, so a failed call is retried rather than
@@ -84,13 +89,28 @@ pub fn apply_update(app: &mut App, fleet: &mut FleetJob, update: Update) {
             revision,
             result,
         } => {
-            let slot = app.slots.entry(pane_id).or_default();
+            // Never `entry().or_default()` here. A worker can outlive the
+            // agent it describes, and recreating the slot would resurrect a
+            // dead agent's summary — which the next snapshot would then have
+            // to prune again. (herdr never reuses a closed pane id, so a late
+            // result cannot be misattributed to a different agent.)
+            let Some(slot) = app.slots.get_mut(&pane_id) else {
+                return;
+            };
             slot.state.in_flight = false;
             // `forced` is deliberately NOT cleared here. The user may have
             // pressed `r` after this call was dispatched; clearing would
             // silently swallow that request. It is cleared on dispatch.
             match result {
-                Ok(summary) => {
+                Ok(None) => {
+                    // An empty pane is a fact, not a fault. Record the
+                    // revision so we do not re-read it every backoff tick.
+                    slot.error = None;
+                    slot.state.from_revision = Some(revision);
+                    slot.state.failures = 0;
+                    slot.state.retry_after = None;
+                }
+                Ok(Some(summary)) => {
                     slot.summary = Some(summary);
                     slot.error = None;
                     slot.state.from_revision = Some(revision);
@@ -99,7 +119,7 @@ pub fn apply_update(app: &mut App, fleet: &mut FleetJob, update: Update) {
                     slot.state.retry_after = None;
                 }
                 Err(err) => {
-                    slot.state.failures += 1;
+                    slot.state.failures = slot.state.failures.saturating_add(1);
                     slot.state.retry_after =
                         Some(Instant::now() + policy::backoff(slot.state.failures));
                     slot.state.from_revision = Some(revision);
@@ -110,6 +130,11 @@ pub fn apply_update(app: &mut App, fleet: &mut FleetJob, update: Update) {
         }
         Update::Fleet { hash, result } => {
             fleet.in_flight = false;
+            // Discard a response for a fleet that no longer exists.
+            if fleet.active_hash != Some(hash) {
+                return;
+            }
+            fleet.active_hash = None;
             if let Ok(text) = result {
                 app.fleet_summary = Some(text);
                 app.fleet_generated_at = Some(Instant::now());
@@ -128,17 +153,28 @@ fn first_line(msg: &str) -> String {
         .collect()
 }
 
-/// Observe every visible agent's status and return the summaries to start.
+/// Observe every agent's status and return up to `capacity` summaries to start.
 ///
-/// Status observation happens for *all* agents, including ones we skip, so
-/// urgent transitions are latched even while a call is in flight.
-pub fn plan_summaries(app: &mut App, now: Instant, cfg: &Cfg) -> Vec<SummaryJob> {
-    let agents: Vec<Agent> = app.agents().into_iter().cloned().collect();
+/// Status observation happens for *every* agent, including ones we skip and
+/// ones beyond the capacity limit, so urgent transitions are latched even
+/// while a call is in flight or a worker slot is unavailable.
+///
+/// Iterates the unfiltered fleet: hiding idle agents is a viewing preference,
+/// not an instruction to stop describing them.
+pub fn plan_summaries(app: &mut App, now: Instant, cfg: &Cfg, capacity: usize) -> Vec<SummaryJob> {
+    // Unfiltered: a display filter must not silently stop summarisation.
+    let agents: Vec<Agent> = app.all_agents();
     let mut jobs = Vec::new();
     for agent in agents {
         let slot = app.slots.entry(agent.pane_id.clone()).or_default();
         policy::observe_status(&mut slot.state, agent.status);
         if policy::decide(&agent, &slot.state, now, cfg) == Decision::Skip {
+            continue;
+        }
+        // Out of worker slots. Leave `forced` and `pending_bypass` intact so
+        // this agent is picked up on a later pass rather than losing its
+        // trigger — status is already observed above, so no edge is missed.
+        if jobs.len() >= capacity {
             continue;
         }
         // Consume the one-shot triggers only when work actually starts.
@@ -174,7 +210,7 @@ pub fn force_all(app: &mut App) {
 /// Skipped below two summaries: with one agent the header would merely
 /// restate the detail pane.
 pub fn plan_fleet(
-    app: &App,
+    app: &mut App,
     job: &mut FleetJob,
     now: Instant,
     cooldown: Duration,
@@ -183,7 +219,7 @@ pub fn plan_fleet(
         return None;
     }
     let headlines: Vec<String> = app
-        .agents()
+        .all_agents()
         .iter()
         .filter_map(|a| {
             app.slots
@@ -201,6 +237,13 @@ pub fn plan_fleet(
         })
         .collect();
     if headlines.len() < 2 {
+        // The fleet shrank below the threshold. An overview describing agents
+        // that have since departed is worse than no overview at all, so drop
+        // it rather than leaving stale prose in the header forever.
+        app.fleet_summary = None;
+        app.fleet_generated_at = None;
+        job.last_success_hash = None;
+        job.active_hash = None;
         return None;
     }
     let hash = hash_of(&headlines);
@@ -214,6 +257,7 @@ pub fn plan_fleet(
         return None;
     }
     job.in_flight = true;
+    job.active_hash = Some(hash);
     job.last_attempt = Some(now);
     Some(FleetRequest { hash, headlines })
 }

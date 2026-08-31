@@ -25,10 +25,16 @@ fn key(c: char) -> KeyEvent {
 fn rows_interleave_group_headers_with_their_agents() {
     let app = app_with_fixture();
     let rows = app.rows();
-    assert!(matches!(rows[0], Row::Group(_)), "a group header leads");
+    // The fixture holds a blocked agent, so the attention section leads.
+    assert!(matches!(rows[0], Row::AttentionHeader(1)));
+    assert!(
+        rows.iter().any(|r| matches!(r, Row::Group(_, _))),
+        "repo headers still appear"
+    );
     assert_eq!(
         rows.iter().filter(|r| matches!(r, Row::Agent(_))).count(),
-        5
+        5,
+        "every agent appears exactly once"
     );
 }
 
@@ -348,4 +354,136 @@ fn the_summaries_mode_distinguishes_no_key_from_the_flag() {
     assert_eq!(M::On.note(), None);
     assert_eq!(M::OffNoKey.note(), Some("summaries off (no key)"));
     assert_eq!(M::OffByFlag.note(), Some("summaries off"));
+}
+
+fn summary_needing(reason: &str) -> herdash::summary::AgentSummary {
+    herdash::summary::AgentSummary {
+        headline: "h".into(),
+        task: "t".into(),
+        now: "n".into(),
+        recent: vec![],
+        needs_attention: true,
+        attention_reason: reason.into(),
+    }
+}
+
+fn summary_clear() -> herdash::summary::AgentSummary {
+    herdash::summary::AgentSummary {
+        headline: "h".into(),
+        task: "t".into(),
+        now: "n".into(),
+        recent: vec![],
+        needs_attention: false,
+        attention_reason: String::new(),
+    }
+}
+
+/// Attention is judged from the model's reading of the transcript, not from
+/// herdr's lifecycle state — an agent can be `working` and still stuck.
+#[test]
+fn a_working_agent_the_model_flags_is_lifted_into_the_attention_section() {
+    let mut app = app_with_fixture();
+    app.slots.entry("w1:p1".into()).or_default().summary =
+        Some(summary_needing("Approve writing to the seeded branch"));
+
+    let rows = app.rows();
+    assert!(
+        matches!(rows[0], Row::AttentionHeader(2)),
+        "the blocked agent plus the flagged working one"
+    );
+
+    let ids: Vec<String> = app.agents().iter().map(|a| a.pane_id.clone()).collect();
+    assert_eq!(
+        ids.iter().filter(|id| *id == "w1:p1").count(),
+        1,
+        "lifted, not duplicated — otherwise j/k lands on it twice"
+    );
+    assert!(
+        ids[0..2].contains(&"w1:p1".to_string()),
+        "and it sits in the attention block"
+    );
+}
+
+/// The converse: herdr says blocked, but the model reads the transcript and
+/// says nothing is actually wanted.
+#[test]
+fn a_blocked_agent_the_model_clears_is_not_in_the_attention_section() {
+    let mut app = app_with_fixture();
+    app.slots.entry("w3:p1".into()).or_default().summary = Some(summary_clear());
+    assert!(
+        !matches!(app.rows()[0], Row::AttentionHeader(_)),
+        "classification overrides herdr's status"
+    );
+}
+
+/// Before any summary exists there is nothing to classify, so herdr's
+/// `blocked` is the best signal available.
+#[test]
+fn herdr_blocked_is_the_fallback_until_a_summary_arrives() {
+    let app = app_with_fixture();
+    let agents = app.agents();
+    let blocked = agents.iter().find(|a| a.pane_id == "w3:p1").unwrap();
+    assert!(app.needs_attention(blocked));
+    let working = agents.iter().find(|a| a.pane_id == "w1:p1").unwrap();
+    assert!(!app.needs_attention(working));
+}
+
+#[test]
+fn the_attention_reason_is_exposed_for_rendering() {
+    let mut app = app_with_fixture();
+    app.slots.entry("w1:p1".into()).or_default().summary =
+        Some(summary_needing("Decide which rounding mode to use"));
+    let agents = app.agents();
+    let agent = agents.iter().find(|a| a.pane_id == "w1:p1").unwrap();
+    assert_eq!(
+        app.attention_reason(agent),
+        Some("Decide which rounding mode to use")
+    );
+    let other = agents.iter().find(|a| a.pane_id == "w2:p1").unwrap();
+    assert_eq!(app.attention_reason(other), None);
+}
+
+#[test]
+fn selection_order_follows_the_rendered_rows_exactly() {
+    let mut app = app_with_fixture();
+    app.slots.entry("w1:p1".into()).or_default().summary =
+        Some(summary_needing("Needs a decision"));
+    let from_rows: Vec<String> = app
+        .rows()
+        .into_iter()
+        .filter_map(|r| match r {
+            Row::Agent(a) => Some(a.pane_id.clone()),
+            _ => None,
+        })
+        .collect();
+    let from_agents: Vec<String> = app.agents().iter().map(|a| a.pane_id.clone()).collect();
+    assert_eq!(
+        from_rows, from_agents,
+        "selection must never disagree with the screen"
+    );
+}
+
+#[test]
+fn clicking_selects_and_a_second_click_is_what_focuses() {
+    let mut app = app_with_fixture();
+    let target = app.agents()[2].pane_id.clone();
+    assert!(app.select(&target));
+    assert_eq!(app.selected.as_deref(), Some(target.as_str()));
+    assert!(!app.select("nope:p9"), "an unknown pane id changes nothing");
+    assert_eq!(app.selected.as_deref(), Some(target.as_str()));
+}
+
+#[test]
+fn scrolling_moves_the_selection_and_clamps() {
+    let mut app = app_with_fixture();
+    let order: Vec<String> = app.agents().iter().map(|a| a.pane_id.clone()).collect();
+    app.scroll_selection(2);
+    assert_eq!(app.selected.as_deref(), Some(order[2].as_str()));
+    app.scroll_selection(-100);
+    assert_eq!(app.selected.as_deref(), Some(order[0].as_str()));
+    app.scroll_selection(100);
+    assert_eq!(
+        app.selected.as_deref(),
+        Some(order.last().unwrap().as_str())
+    );
 }

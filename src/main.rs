@@ -1,7 +1,7 @@
 //! herdash — terminal dashboard for herdr agent fleets.
 //!
-//! This binary is deliberately thin. It owns the terminal, multiplexes three
-//! input sources with `select!`, and performs the I/O that
+//! This binary is deliberately thin. It owns the terminal, multiplexes input
+//! sources with `select!`, and performs the I/O that
 //! [`herdash::orchestrator`] describes. Every non-trivial state transition
 //! lives in the library, where it is tested.
 
@@ -10,13 +10,18 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use crossterm::event::{Event, EventStream, KeyEventKind};
+use crossterm::event::{
+    DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyEventKind, MouseButton,
+    MouseEvent, MouseEventKind,
+};
 use futures_util::StreamExt;
 use tokio::sync::mpsc;
+use tokio::task::JoinSet;
 
 use herdash::app::{Action, App, ConnState};
 use herdash::config::{Cli, Settings};
 use herdash::herdr::client::Client;
+use herdash::herdr::types::Snapshot;
 use herdash::orchestrator::{self, FLEET_COOLDOWN, FleetJob, FleetRequest, SummaryJob, Update};
 use herdash::summary::Summarizer;
 use herdash::summary::openrouter::OpenRouter;
@@ -26,6 +31,13 @@ use herdash::ui;
 /// Redraw cadence, so ages and the spinner stay live.
 const TICK: Duration = Duration::from_millis(120);
 
+/// Ceiling on simultaneous summary calls.
+///
+/// Without a bound, a fifty-agent session would fire fifty OpenRouter requests
+/// the moment it starts. Agents beyond the limit keep their latched triggers
+/// and are picked up on a later pass, so nothing is dropped — only deferred.
+const MAX_SUMMARY_TASKS: usize = 6;
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -33,8 +45,9 @@ async fn main() -> Result<()> {
     let client = Client::new(settings.socket.clone());
 
     // Prove herdr is reachable before taking over the terminal, so the error
-    // stays readable instead of flashing past an alternate screen.
-    client.snapshot().await.with_context(|| {
+    // stays readable instead of flashing past an alternate screen. The result
+    // seeds the first frame rather than being thrown away.
+    let initial = client.snapshot().await.with_context(|| {
         format!(
             "herdash could not reach herdr at {}.\n\
              Is the server running? Try `herdr status server`, or start it with `herdr server`.",
@@ -44,16 +57,34 @@ async fn main() -> Result<()> {
 
     let terminal = ratatui::init();
     install_panic_hook();
-    let result = run(terminal, settings, client).await;
+    if settings.mouse
+        && let Err(err) = enable_mouse()
+    {
+        eprintln!("herdash: mouse capture unavailable: {err}");
+    }
+    let result = run(terminal, settings.clone(), client, initial).await;
+    if settings.mouse {
+        let _ = disable_mouse();
+    }
     ratatui::restore();
     result
 }
 
+fn enable_mouse() -> std::io::Result<()> {
+    crossterm::execute!(std::io::stdout(), EnableMouseCapture)
+}
+
+fn disable_mouse() -> std::io::Result<()> {
+    crossterm::execute!(std::io::stdout(), DisableMouseCapture)
+}
+
 /// Restore the terminal before a panic prints, so a crash never leaves a
-/// broken tty behind.
+/// broken tty behind — mouse capture included, or the user's terminal keeps
+/// emitting escape codes on every click.
 fn install_panic_hook() {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
+        let _ = disable_mouse();
         ratatui::restore();
         previous(info);
     }));
@@ -63,6 +94,7 @@ async fn run(
     mut terminal: ratatui::DefaultTerminal,
     settings: Settings,
     client: Client,
+    initial: Snapshot,
 ) -> Result<()> {
     let (tx, mut rx) = mpsc::channel::<Update>(128);
     tokio::spawn(poll_snapshots(
@@ -77,6 +109,8 @@ async fn run(
         .map(|key| Arc::new(OpenRouter::new(key, settings.model.clone())) as Arc<dyn Summarizer>);
 
     let mut app = App::new(settings.summaries);
+    app.apply_snapshot(&initial);
+
     let mut fleet_job = FleetJob::default();
     let cfg = Cfg {
         cooldown: settings.cooldown,
@@ -84,9 +118,13 @@ async fn run(
     };
     let mut events = EventStream::new();
     let mut ticker = tokio::time::interval(TICK);
+    let mut summary_tasks: JoinSet<()> = JoinSet::new();
+    let mut fleet_task: JoinSet<()> = JoinSet::new();
+    let mut focus_task: JoinSet<()> = JoinSet::new();
 
     loop {
         terminal.draw(|frame| ui::draw(frame, &app))?;
+        let area = terminal.get_frame().area();
 
         tokio::select! {
             maybe_event = events.next() => match maybe_event {
@@ -94,17 +132,16 @@ async fn run(
                     match app.on_key(key) {
                         Action::Quit => break,
                         Action::Focus(pane_id) => {
-                            let client = client.clone();
-                            let tx = tx.clone();
-                            tokio::spawn(async move {
-                                if let Err(err) = client.focus_agent(&pane_id).await {
-                                    let _ = tx.send(Update::Notice(format!("focus failed: {err}"))).await;
-                                }
-                            });
+                            spawn_focus(&mut focus_task, &client, &tx, pane_id);
                         }
                         Action::ForceOne(pane_id) => orchestrator::force_one(&mut app, &pane_id),
                         Action::ForceAll => orchestrator::force_all(&mut app),
                         Action::None => {}
+                    }
+                }
+                Some(Ok(Event::Mouse(mouse))) => {
+                    if let Some(pane_id) = on_mouse(&mut app, area, mouse) {
+                        spawn_focus(&mut focus_task, &client, &tx, pane_id);
                     }
                 }
                 Some(Ok(_)) => {}
@@ -113,6 +150,10 @@ async fn run(
             },
             Some(update) = rx.recv() => orchestrator::apply_update(&mut app, &mut fleet_job, update),
             _ = ticker.tick() => app.tick = app.tick.wrapping_add(1),
+            // Reap finished workers so the sets do not grow without bound.
+            Some(_) = summary_tasks.join_next(), if !summary_tasks.is_empty() => {}
+            Some(_) = fleet_task.join_next(), if !fleet_task.is_empty() => {}
+            Some(_) = focus_task.join_next(), if !focus_task.is_empty() => {}
         }
 
         if app.should_quit {
@@ -121,8 +162,9 @@ async fn run(
 
         if let Some(summarizer) = &summarizer {
             let now = Instant::now();
-            for job in orchestrator::plan_summaries(&mut app, now, &cfg) {
-                tokio::spawn(summarize_agent(
+            let capacity = MAX_SUMMARY_TASKS.saturating_sub(summary_tasks.len());
+            for job in orchestrator::plan_summaries(&mut app, now, &cfg, capacity) {
+                summary_tasks.spawn(summarize_agent(
                     client.clone(),
                     Arc::clone(summarizer),
                     job,
@@ -130,12 +172,57 @@ async fn run(
                     tx.clone(),
                 ));
             }
-            if let Some(req) = orchestrator::plan_fleet(&app, &mut fleet_job, now, FLEET_COOLDOWN) {
-                tokio::spawn(summarize_fleet(Arc::clone(summarizer), req, tx.clone()));
+            if let Some(req) =
+                orchestrator::plan_fleet(&mut app, &mut fleet_job, now, FLEET_COOLDOWN)
+            {
+                fleet_task.spawn(summarize_fleet(Arc::clone(summarizer), req, tx.clone()));
             }
         }
     }
     Ok(())
+}
+
+/// Translate a mouse event, returning a pane id when the click asks to focus.
+///
+/// A first click selects; clicking the already-selected agent focuses it in
+/// herdr. That keeps a stray click from yanking the user's view away.
+fn on_mouse(app: &mut App, area: ratatui::layout::Rect, mouse: MouseEvent) -> Option<String> {
+    match mouse.kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            let ui::Hit::Agent(pane_id) = ui::hit_test(app, area, mouse.column, mouse.row)?;
+            if app.selected.as_deref() == Some(pane_id.as_str()) {
+                return Some(pane_id);
+            }
+            app.select(&pane_id);
+            None
+        }
+        MouseEventKind::ScrollDown => {
+            app.scroll_selection(1);
+            None
+        }
+        MouseEventKind::ScrollUp => {
+            app.scroll_selection(-1);
+            None
+        }
+        _ => None,
+    }
+}
+
+fn spawn_focus(
+    tasks: &mut JoinSet<()>,
+    client: &Client,
+    tx: &mpsc::Sender<Update>,
+    pane_id: String,
+) {
+    let client = client.clone();
+    let tx = tx.clone();
+    tasks.spawn(async move {
+        if let Err(err) = client.focus_agent(&pane_id).await {
+            let _ = tx
+                .send(Update::Notice(format!("focus failed: {err}")))
+                .await;
+        }
+    });
 }
 
 /// Poll `session.snapshot` forever.
@@ -174,12 +261,13 @@ async fn summarize_agent(
     // read's value instead would make every agent look permanently changed and
     // defeat the "only summarise when output actually moved" rule entirely.
     let result = match client.read_agent(&job.pane_id, lines).await {
-        Ok(read) if read.text.trim().is_empty() => {
-            Err("pane produced no output to summarise".to_string())
-        }
+        // Nothing to describe is a normal state, not an error: reporting it as
+        // a failure would re-read an empty pane on every backoff tick forever.
+        Ok(read) if read.text.trim().is_empty() => Ok(None),
         Ok(read) => summarizer
             .summarize_agent(&read.text)
             .await
+            .map(Some)
             .map_err(|e| e.to_string()),
         Err(err) => Err(err.to_string()),
     };

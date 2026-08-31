@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 /// Maximum rendered length of a sidebar headline.
 pub const HEADLINE_MAX: usize = 60;
 /// Maximum number of "recent work" bullets kept.
-pub const RECENT_MAX: usize = 5;
+pub const RECENT_MAX: usize = 6;
+/// Maximum rendered length of an attention reason.
+pub const ATTENTION_MAX: usize = 100;
 /// Rendered in place of an empty field.
 pub const DASH: &str = "—";
 
@@ -16,11 +18,21 @@ pub struct AgentSummary {
     pub headline: String,
     /// The overall objective the agent is pursuing.
     pub task: String,
-    /// What the agent is doing at this moment.
+    /// What the agent is doing at this moment, in a sentence or three.
     pub now: String,
     /// Recently completed steps, newest first.
     #[serde(default)]
     pub recent: Vec<String>,
+    /// Whether the agent is waiting on the human for something.
+    ///
+    /// Judged from the transcript, not from herdr's lifecycle state: an agent
+    /// can be `working` yet stuck on a question it already asked, or `idle`
+    /// simply because it finished cleanly and needs nothing.
+    #[serde(default)]
+    pub needs_attention: bool,
+    /// What it is waiting for. Empty unless `needs_attention`.
+    #[serde(default)]
+    pub attention_reason: String,
 }
 
 impl AgentSummary {
@@ -40,6 +52,12 @@ impl AgentSummary {
             .filter(|r| !r.is_empty())
             .take(RECENT_MAX)
             .collect();
+        self.attention_reason = truncate_chars(self.attention_reason.trim(), ATTENTION_MAX);
+        // A reason without the flag is meaningless, and a flag without a
+        // reason is unactionable — keep the two consistent.
+        if self.attention_reason.is_empty() {
+            self.needs_attention = false;
+        }
         self
     }
 }

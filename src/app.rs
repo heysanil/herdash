@@ -10,7 +10,7 @@ use std::time::Instant;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::fleet::{self, Agent, RepoGroup, Timings};
-use crate::herdr::types::Snapshot;
+use crate::herdr::types::{AgentStatus, Snapshot};
 use crate::summary::AgentSummary;
 use crate::summary::policy::SummaryState;
 
@@ -57,10 +57,14 @@ pub enum ConnState {
     Reconnecting { since: Instant },
 }
 
-/// One rendered sidebar line group: either a repo header or an agent.
+/// One rendered sidebar line: a section header or an agent.
 #[derive(Debug, Clone, Copy)]
 pub enum Row<'a> {
-    Group(&'a RepoGroup),
+    /// The pinned "waiting on you" section, carrying how many agents it holds.
+    AttentionHeader(usize),
+    /// A repository section, carrying how many of its agents are shown here
+    /// (agents lifted into the attention section are not counted twice).
+    Group(&'a RepoGroup, usize),
     Agent(&'a Agent),
 }
 
@@ -140,6 +144,21 @@ impl App {
         self.summaries.enabled()
     }
 
+    /// Every agent in the last snapshot, unfiltered.
+    ///
+    /// Summarisation must never be scoped by a display filter: hiding idle
+    /// agents is a viewing preference, not an instruction to stop describing
+    /// them, and `R` has to reach agents the filter is hiding.
+    pub fn all_agents(&self) -> Vec<Agent> {
+        let Some(snapshot) = &self.last_snapshot else {
+            return Vec::new();
+        };
+        fleet::build(snapshot, &self.timings, false)
+            .into_iter()
+            .flat_map(|group| group.agents)
+            .collect()
+    }
+
     /// Every agent in the last snapshot, including ones the filter hides.
     pub fn all_agent_ids(&self) -> Vec<String> {
         self.last_snapshot
@@ -210,17 +229,80 @@ impl App {
         self.agents().iter().position(|a| a.pane_id == sel)
     }
 
-    /// Every visible agent in render order.
+    /// Every visible agent, in the order the sidebar renders them.
+    ///
+    /// Derived from [`Self::rows`] so selection can never disagree with what
+    /// is on screen.
     pub fn agents(&self) -> Vec<&Agent> {
-        self.groups.iter().flat_map(|g| g.agents.iter()).collect()
+        self.rows()
+            .into_iter()
+            .filter_map(|r| match r {
+                Row::Agent(a) => Some(a),
+                _ => None,
+            })
+            .collect()
     }
 
-    /// Sidebar rows: a header per group, then its agents.
+    /// Whether this agent is waiting on the human for something.
+    ///
+    /// Judged from the model's reading of the transcript, **not** from herdr's
+    /// lifecycle state: an agent can be `working` while sitting on a question
+    /// it already asked, and `idle` simply because it finished cleanly and
+    /// needs nothing. Before a summary exists we fall back to herdr's
+    /// `blocked`, which is the best signal available until then.
+    pub fn needs_attention(&self, agent: &Agent) -> bool {
+        match self
+            .slots
+            .get(&agent.pane_id)
+            .and_then(|s| s.summary.as_ref())
+        {
+            Some(summary) => summary.needs_attention,
+            None => agent.status == AgentStatus::Blocked,
+        }
+    }
+
+    /// What the agent is waiting for, when the model said so.
+    pub fn attention_reason(&self, agent: &Agent) -> Option<&str> {
+        let reason = self
+            .slots
+            .get(&agent.pane_id)
+            .and_then(|s| s.summary.as_ref())
+            .map(|s| s.attention_reason.as_str())
+            .filter(|r| !r.is_empty())?;
+        Some(reason)
+    }
+
+    /// Sidebar rows: the pinned attention section, then a header per repo.
+    ///
+    /// Agents needing attention are *lifted out* of their repo group rather
+    /// than duplicated, so `j`/`k` never lands on the same agent twice.
     pub fn rows(&self) -> Vec<Row<'_>> {
         let mut rows = Vec::new();
+
+        let waiting: Vec<&Agent> = self
+            .groups
+            .iter()
+            .flat_map(|g| g.agents.iter())
+            .filter(|a| self.needs_attention(a))
+            .collect();
+        if !waiting.is_empty() {
+            rows.push(Row::AttentionHeader(waiting.len()));
+            for a in waiting {
+                rows.push(Row::Agent(a));
+            }
+        }
+
         for g in &self.groups {
-            rows.push(Row::Group(g));
-            for a in &g.agents {
+            let remaining: Vec<&Agent> = g
+                .agents
+                .iter()
+                .filter(|a| !self.needs_attention(a))
+                .collect();
+            if remaining.is_empty() {
+                continue;
+            }
+            rows.push(Row::Group(g, remaining.len()));
+            for a in remaining {
                 rows.push(Row::Agent(a));
             }
         }
@@ -234,6 +316,22 @@ impl App {
 
     pub fn counts(&self) -> fleet::Counts {
         fleet::counts(&self.groups)
+    }
+
+    /// Select a specific agent, e.g. from a mouse click. Returns whether the
+    /// pane id was actually present.
+    pub fn select(&mut self, pane_id: &str) -> bool {
+        if self.agents().iter().any(|a| a.pane_id == pane_id) {
+            self.selected = Some(pane_id.to_string());
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Move the selection by `delta` rows, e.g. from a scroll wheel.
+    pub fn scroll_selection(&mut self, delta: isize) {
+        self.move_selection(delta);
     }
 
     fn move_selection(&mut self, delta: isize) {
@@ -316,7 +414,7 @@ impl App {
                 None => Action::None,
             },
             KeyCode::Char('R') => {
-                if self.agents().is_empty() {
+                if self.all_agent_ids().is_empty() {
                     Action::None
                 } else {
                     Action::ForceAll

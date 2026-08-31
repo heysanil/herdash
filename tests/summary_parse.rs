@@ -31,10 +31,15 @@ fn an_absent_recent_array_defaults_to_empty() {
 
 #[test]
 fn blank_recent_entries_are_dropped_and_the_list_is_capped() {
-    let body =
-        wrap(r#"{"headline":"h","task":"t","now":"n","recent":["a","  ","b","c","d","e","f"]}"#);
+    let body = wrap(
+        r#"{"headline":"h","task":"t","now":"n","recent":["a","  ","b","c","d","e","f","g"]}"#,
+    );
     let s = parse_agent_response(&body).unwrap();
-    assert_eq!(s.recent, vec!["a", "b", "c", "d", "e"]);
+    assert_eq!(
+        s.recent,
+        vec!["a", "b", "c", "d", "e", "f"],
+        "blank entries dropped, list capped at six"
+    );
 }
 
 #[test]
@@ -188,6 +193,8 @@ fn a_stub_summarizer_satisfies_the_trait() {
                 task: "t".into(),
                 now: "n".into(),
                 recent: vec![],
+                needs_attention: false,
+                attention_reason: String::new(),
             })
         }
         async fn summarize_fleet(&self, _h: &[String]) -> anyhow::Result<String> {
@@ -195,4 +202,67 @@ fn a_stub_summarizer_satisfies_the_trait() {
         }
     }
     let _: Box<dyn herdash::summary::Summarizer> = Box::new(Stub);
+}
+
+#[test]
+fn the_schema_requires_the_attention_classification() {
+    let b = agent_request_body("m", "t");
+    let schema = &b["response_format"]["json_schema"]["schema"];
+    let required = schema["required"].as_array().unwrap();
+    for field in [
+        "headline",
+        "task",
+        "now",
+        "recent",
+        "needs_attention",
+        "attention_reason",
+    ] {
+        assert!(required.iter().any(|r| r == field), "missing {field}");
+    }
+    assert_eq!(schema["properties"]["needs_attention"]["type"], "boolean");
+}
+
+#[test]
+fn an_attention_flag_and_reason_are_parsed() {
+    let body = wrap(
+        r#"{"headline":"h","task":"t","now":"n","recent":[],"needs_attention":true,"attention_reason":"Approve the migration"}"#,
+    );
+    let s = parse_agent_response(&body).unwrap();
+    assert!(s.needs_attention);
+    assert_eq!(s.attention_reason, "Approve the migration");
+}
+
+/// A flag with no reason is unactionable, so it is downgraded rather than
+/// shown as a mystery alert the reader cannot resolve.
+#[test]
+fn a_flag_without_a_reason_is_cleared() {
+    let body = wrap(
+        r#"{"headline":"h","task":"t","now":"n","recent":[],"needs_attention":true,"attention_reason":"   "}"#,
+    );
+    let s = parse_agent_response(&body).unwrap();
+    assert!(!s.needs_attention);
+    assert!(s.attention_reason.is_empty());
+}
+
+#[test]
+fn an_overlong_attention_reason_is_truncated() {
+    let long = "x".repeat(400);
+    let body = wrap(
+        &serde_json::json!({
+            "headline":"h","task":"t","now":"n","recent":[],
+            "needs_attention": true, "attention_reason": long
+        })
+        .to_string(),
+    );
+    let s = parse_agent_response(&body).unwrap();
+    assert!(s.attention_reason.chars().count() <= 100);
+    assert!(s.needs_attention);
+}
+
+/// Older payloads without the new fields must still parse.
+#[test]
+fn a_response_without_attention_fields_defaults_to_no_attention() {
+    let body = wrap(r#"{"headline":"h","task":"t","now":"n","recent":[]}"#);
+    let s = parse_agent_response(&body).unwrap();
+    assert!(!s.needs_attention);
 }

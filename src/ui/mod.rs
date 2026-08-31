@@ -10,7 +10,7 @@ pub mod theme;
 use std::time::Duration;
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout};
+use ratatui::layout::{Constraint, Layout, Rect};
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::App;
@@ -52,11 +52,21 @@ pub fn truncate_to_width(s: &str, max: usize) -> String {
 }
 
 /// Compose the whole frame.
-pub fn draw(frame: &mut Frame, app: &App) {
-    let area = frame.area();
-    if area.width == 0 || area.height == 0 {
-        return;
-    }
+/// Where each pane sits in the frame.
+///
+/// Computed by one function so rendering and mouse hit-testing can never
+/// disagree about which pixel belongs to which pane.
+#[derive(Debug, Clone, Copy)]
+pub struct Panes {
+    pub header: Rect,
+    /// `None` when a narrow terminal has the detail view open instead.
+    pub sidebar: Option<Rect>,
+    pub detail: Option<Rect>,
+    pub footer: Rect,
+}
+
+/// Split the frame. Pure and deterministic in `App` state plus size.
+pub fn layout(app: &App, area: Rect) -> Panes {
     let header_height = header::height(app, area.height).min(area.height);
     let footer_height = if area.height > header_height { 1 } else { 0 };
 
@@ -67,28 +77,73 @@ pub fn draw(frame: &mut Frame, app: &App) {
     ])
     .split(area);
 
-    header::render(frame, rows[0], app);
-
     if area.width < theme::NARROW_COLS {
         // Narrow terminals show one pane at a time.
         if app.detail_open {
-            detail::render(frame, rows[1], app);
+            Panes {
+                header: rows[0],
+                sidebar: None,
+                detail: Some(rows[1]),
+                footer: rows[2],
+            }
         } else {
-            sidebar::render(frame, rows[1], app);
+            Panes {
+                header: rows[0],
+                sidebar: Some(rows[1]),
+                detail: None,
+                footer: rows[2],
+            }
         }
     } else {
         let cols =
             Layout::horizontal([Constraint::Length(theme::SIDEBAR_WIDTH), Constraint::Min(0)])
                 .split(rows[1]);
-        sidebar::render(frame, cols[0], app);
-        detail::render(frame, cols[1], app);
+        Panes {
+            header: rows[0],
+            sidebar: Some(cols[0]),
+            detail: Some(cols[1]),
+            footer: rows[2],
+        }
     }
+}
 
-    footer::render(frame, rows[2], app);
+/// Compose the whole frame.
+pub fn draw(frame: &mut Frame, app: &App) {
+    let area = frame.area();
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let panes = layout(app, area);
+    header::render(frame, panes.header, app);
+    if let Some(sidebar) = panes.sidebar {
+        // The divider only earns its column when a detail pane sits beside it.
+        sidebar::render(frame, sidebar, app, panes.detail.is_some());
+    }
+    if let Some(detail) = panes.detail {
+        detail::render(frame, detail, app);
+    }
+    footer::render(frame, panes.footer, app);
 
     if app.show_help {
         footer::render_help(frame, area);
     }
+}
+
+/// What sits under a mouse position, if anything actionable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Hit {
+    /// The sidebar row for this pane id.
+    Agent(String),
+}
+
+/// Resolve a mouse position to something the app can act on.
+pub fn hit_test(app: &App, area: Rect, column: u16, row: u16) -> Option<Hit> {
+    if area.width == 0 || area.height == 0 {
+        return None;
+    }
+    let panes = layout(app, area);
+    let sidebar = panes.sidebar?;
+    sidebar::agent_at(app, sidebar, panes.detail.is_some(), column, row).map(Hit::Agent)
 }
 
 /// Greedy word wrap into at most `max_lines` lines of `width` characters,

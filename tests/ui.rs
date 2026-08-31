@@ -56,6 +56,8 @@ fn summary() -> AgentSummary {
             "Confirmed the first finding".into(),
             "Applied the comment fix".into(),
         ],
+        needs_attention: false,
+        attention_reason: String::new(),
     }
 }
 
@@ -383,6 +385,8 @@ fn empty_summary_fields_render_as_an_em_dash() {
         task: String::new(),
         now: String::new(),
         recent: vec![],
+        needs_attention: false,
+        attention_reason: String::new(),
     });
     assert!(render(&a, 140, 40).contains("—"));
 }

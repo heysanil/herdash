@@ -34,6 +34,10 @@ pub struct Cli {
     /// Path to the herdr socket. Overrides $HERDR_SOCKET_PATH.
     #[arg(long)]
     pub socket: Option<PathBuf>,
+
+    /// Disable mouse capture, restoring your terminal's own text selection.
+    #[arg(long)]
+    pub no_mouse: bool,
 }
 
 /// The user's home directory, falling back to `.` if it cannot be determined.
@@ -92,6 +96,7 @@ pub struct Settings {
     pub interval: Duration,
     pub cooldown: Duration,
     pub lines: u32,
+    pub mouse: bool,
 }
 
 impl Settings {
@@ -119,6 +124,7 @@ impl Settings {
             interval: Duration::from_secs(cli.interval.max(1)),
             cooldown: Duration::from_secs(cli.cooldown),
             lines: cli.lines,
+            mouse: !cli.no_mouse,
         }
     }
 

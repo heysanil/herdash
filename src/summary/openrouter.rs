@@ -21,17 +21,35 @@ You summarize a coding agent's terminal transcript for a status dashboard. \
 The transcript contains terminal chrome — status lines, progress bars, token \
 counters, spinners, box-drawing characters. Ignore all of it and describe only \
 the actual work. Write plainly, in the third person, with no preamble. \
-`headline` must be at most 60 characters. `task` is the overall objective. \
-`now` is what the agent is doing at this moment. `recent` lists at most five \
-recently completed steps, newest first. If the transcript shows the agent \
-waiting on a question or approval, say so explicitly in `now`. \
+\
+Fields:\n\
+- `headline`: at most 60 characters, the gist at a glance.\n\
+- `task`: the overall objective and its context, as a short paragraph of two \
+to four sentences. Say what is being built or fixed, in which area of the \
+codebase, and why — enough that a reader who has not looked at this agent in \
+an hour can pick the thread back up.\n\
+- `now`: what the agent is doing at this exact moment, in one to three \
+sentences. Be concrete: name the file, command, test or error it is on.\n\
+- `recent`: up to six recently completed steps, newest first, one short \
+clause each.\n\
+- `needs_attention`: true only if the agent cannot make progress without the \
+human. That means it asked a question, is waiting at an approval or \
+permission prompt, hit an error it cannot resolve alone, flagged an ambiguity \
+it needs decided, or finished its work and is waiting for what to do next. \
+It is false if the agent is simply busy, or thinking, or running a long \
+command. Judge this from the transcript itself, not from how idle the pane \
+looks.\n\
+- `attention_reason`: if `needs_attention` is true, one sentence of at most \
+100 characters saying exactly what is needed from the human, phrased as the \
+thing they must do or decide. Empty string otherwise.\n\
+\
 Respond only with the JSON object.";
 
 const FLEET_SYSTEM: &str = "\
 You summarize a fleet of coding agents for a dashboard header. Given one line \
 per agent, write one or two sentences describing what the fleet is collectively \
-doing and which agents need attention. Be specific and terse. No preamble, no \
-bullet points, no markdown.";
+doing and naming any agent that is waiting on the human. Be specific and terse. \
+No preamble, no bullet points, no markdown.";
 
 /// Keep the tail of an over-long transcript, cut on a UTF-8 boundary and
 /// preferably at a line break. Recent output is what matters.
@@ -55,7 +73,7 @@ pub fn agent_request_body(model: &str, transcript: &str) -> Value {
     json!({
         "model": model,
         "temperature": 0.2,
-        "max_tokens": 500,
+        "max_tokens": 900,
         "messages": [
             { "role": "system", "content": AGENT_SYSTEM },
             { "role": "user", "content": format!("Transcript:\n{}", clamp_transcript(transcript, TRANSCRIPT_MAX_BYTES)) }
@@ -71,9 +89,14 @@ pub fn agent_request_body(model: &str, transcript: &str) -> Value {
                         "headline": { "type": "string" },
                         "task": { "type": "string" },
                         "now": { "type": "string" },
-                        "recent": { "type": "array", "items": { "type": "string" } }
+                        "recent": { "type": "array", "items": { "type": "string" } },
+                        "needs_attention": { "type": "boolean" },
+                        "attention_reason": { "type": "string" }
                     },
-                    "required": ["headline", "task", "now", "recent"],
+                    "required": [
+                        "headline", "task", "now", "recent",
+                        "needs_attention", "attention_reason"
+                    ],
                     "additionalProperties": false
                 }
             }

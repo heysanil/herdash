@@ -4,6 +4,7 @@ use std::time::Instant;
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
+use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
@@ -58,7 +59,22 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     ];
 
     let slot = app.slots.get(&agent.pane_id);
+    let summary = slot.and_then(|s| s.summary.as_ref());
 
+    // What it wants from you comes first — everything else is context.
+    if let Some(reason) = app.attention_reason(agent) {
+        lines.push(Line::from(Span::styled(
+            "⚠ WAITING ON YOU",
+            theme::alert().add_modifier(Modifier::BOLD),
+        )));
+        for l in wrap_to(reason, width, 3) {
+            lines.push(Line::from(Span::styled(l, theme::alert())));
+        }
+        lines.push(Line::from(""));
+    }
+
+    // A failed refresh annotates the previous summary rather than replacing
+    // it: stale detail is more useful than an empty pane.
     if let Some(err) = slot.and_then(|s| s.error.as_ref()) {
         lines.push(Line::from(Span::styled(
             "⚠ summary unavailable",
@@ -67,18 +83,31 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         for l in wrap_to(err, width, 3) {
             lines.push(Line::from(Span::styled(l, theme::dim())));
         }
-    } else if let Some(summary) = slot.and_then(|s| s.summary.as_ref()) {
+        if summary.is_some() {
+            lines.push(Line::from(Span::styled(
+                "showing the last successful summary",
+                theme::dim(),
+            )));
+        }
+        lines.push(Line::from(""));
+    }
+
+    if let Some(summary) = summary {
+        // TASK carries a paragraph, NOW a few sentences — enough to pick the
+        // thread back up after an hour away.
         section(
             &mut lines,
             "TASK",
             &[or_dash(&summary.task).to_string()],
             width,
+            14,
         );
         section(
             &mut lines,
             "NOW",
             &[or_dash(&summary.now).to_string()],
             width,
+            8,
         );
         let recent: Vec<String> = if summary.recent.is_empty() {
             vec![or_dash("").to_string()]
@@ -110,7 +139,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         }
     } else if slot.map(|s| s.state.in_flight).unwrap_or(false) {
         lines.push(Line::from(Span::styled("Summarising…", theme::dim())));
-    } else {
+    } else if slot.and_then(|s| s.error.as_ref()).is_none() {
         for l in wrap_to(
             "No summary yet — one is generated as soon as this agent produces output.",
             width,
@@ -123,13 +152,19 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-fn section(lines: &mut Vec<Line<'static>>, title: &str, body: &[String], width: usize) {
+fn section(
+    lines: &mut Vec<Line<'static>>,
+    title: &str,
+    body: &[String],
+    width: usize,
+    max_lines: usize,
+) {
     lines.push(Line::from(Span::styled(
         title.to_string(),
         theme::heading(),
     )));
     for para in body {
-        for l in wrap_to(para, width, 6) {
+        for l in wrap_to(para, width, max_lines) {
             lines.push(Line::from(Span::styled(l, theme::label())));
         }
     }
