@@ -11,8 +11,45 @@ use std::time::Duration;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
+use unicode_width::UnicodeWidthStr;
 
 use crate::app::App;
+
+/// Terminal columns a string occupies.
+///
+/// Not the same as `chars().count()`: CJK and emoji are double-width, so a
+/// label of 11 characters can consume 22 columns. Counting characters silently
+/// pushed the workspace id and age off the right edge of the sidebar.
+pub fn display_width(s: &str) -> usize {
+    UnicodeWidthStr::width(s)
+}
+
+/// Truncate to at most `max` display columns, appending `…` when cut.
+///
+/// Never splits a character, and accounts for the ellipsis itself.
+pub fn truncate_to_width(s: &str, max: usize) -> String {
+    if display_width(s) <= max {
+        return s.to_string();
+    }
+    if max == 0 {
+        return String::new();
+    }
+    // Reserve one column for the ellipsis.
+    let budget = max - 1;
+    let mut out = String::new();
+    let mut used = 0usize;
+    for ch in s.chars() {
+        let w = display_width(ch.encode_utf8(&mut [0u8; 4]));
+        if used + w > budget {
+            break;
+        }
+        out.push(ch);
+        used += w;
+    }
+    out = out.trim_end().to_string();
+    out.push('…');
+    out
+}
 
 /// Compose the whole frame.
 pub fn draw(frame: &mut Frame, app: &App) {
@@ -73,9 +110,9 @@ pub fn wrap_to(text: &str, width: usize, max_lines: usize) -> Vec<String> {
         let mut word = word.to_string();
         loop {
             let candidate_len = if current.is_empty() {
-                word.chars().count()
+                display_width(&word)
             } else {
-                current.chars().count() + 1 + word.chars().count()
+                display_width(&current) + 1 + display_width(&word)
             };
             if candidate_len <= width {
                 if !current.is_empty() {
@@ -91,9 +128,32 @@ pub fn wrap_to(text: &str, width: usize, max_lines: usize) -> Vec<String> {
                 }
                 continue;
             }
-            // A single word wider than the line: hard-break it.
-            let head: String = word.chars().take(width).collect();
-            let tail: String = word.chars().skip(width).collect();
+            // A single word wider than the line: hard-break it on a column
+            // boundary, so a double-width glyph is never split in half.
+            let mut head = String::new();
+            let mut used = 0usize;
+            let mut split_at = 0usize;
+            for (i, ch) in word.char_indices() {
+                let w = display_width(ch.encode_utf8(&mut [0u8; 4]));
+                if used + w > width {
+                    break;
+                }
+                head.push(ch);
+                used += w;
+                split_at = i + ch.len_utf8();
+            }
+            if head.is_empty() {
+                // `width` is narrower than a single glyph; emit one and move on
+                // rather than looping forever.
+                let mut it = word.chars();
+                if let Some(ch) = it.next() {
+                    head.push(ch);
+                    split_at = ch.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            let tail: String = word[split_at..].to_string();
             lines.push(head);
             if lines.len() == max_lines {
                 return ellipsize_last(lines, width, !tail.is_empty());
@@ -114,15 +174,41 @@ pub fn wrap_to(text: &str, width: usize, max_lines: usize) -> Vec<String> {
     lines
 }
 
+/// Replace the final line with an ellipsised version that fits `width`
+/// columns and always ends in `…`.
+///
+/// Unlike [`truncate_to_width`], this appends the ellipsis unconditionally:
+/// the caller only reaches here because text was dropped, and a line that
+/// silently ends mid-thought reads as complete.
 fn ellipsize_last(mut lines: Vec<String>, width: usize, truncated: bool) -> Vec<String> {
     if truncated && let Some(last) = lines.last_mut() {
-        let keep = width.saturating_sub(1);
-        let mut s: String = last.chars().take(keep).collect();
-        s = s.trim_end().to_string();
-        s.push('…');
-        *last = s;
+        *last = ellipsize_to_width(last, width);
     }
     lines
+}
+
+fn ellipsize_to_width(s: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    if width == 1 {
+        return "…".to_string();
+    }
+    // One column is reserved for the ellipsis itself.
+    let budget = width - 1;
+    let mut out = String::new();
+    let mut used = 0usize;
+    for ch in s.chars() {
+        let w = display_width(ch.encode_utf8(&mut [0u8; 4]));
+        if used + w > budget {
+            break;
+        }
+        out.push(ch);
+        used += w;
+    }
+    let mut out = out.trim_end().to_string();
+    out.push('…');
+    out
 }
 
 /// Compact duration: `5s`, `1m`, `1h`, `1d`. A `~` prefix marks a lower bound.

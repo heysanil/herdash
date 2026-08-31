@@ -9,10 +9,9 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
-use super::{fmt_age, theme, wrap_to};
+use super::{display_width, fmt_age, theme, truncate_to_width, wrap_to};
 use crate::app::{App, Row};
 use crate::fleet::Agent;
-use crate::summary::types::truncate_chars;
 
 /// Lines a headline may occupy under an agent row.
 const HEADLINE_LINES: usize = 2;
@@ -87,7 +86,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 /// `alpha ─────────────── 2`
 fn group_header(name: &str, count: usize, width: usize) -> Line<'static> {
     let count_s = count.to_string();
-    let used = name.chars().count() + count_s.chars().count() + 2;
+    let used = display_width(name) + display_width(&count_s) + 2;
     let rule = "─".repeat(width.saturating_sub(used).max(1));
     Line::from(vec![
         Span::styled(name.to_string(), theme::heading()),
@@ -103,11 +102,13 @@ fn agent_row(a: &Agent, width: usize, now: Instant, selected: bool) -> Line<'sta
         a.age_is_lower_bound,
     );
     let ws = a.workspace_id.clone();
-    // glyph + space, then label, then " {ws}  {age}"
-    let fixed = 2 + 1 + ws.chars().count() + 2 + age.chars().count();
+    // glyph + space, then label, then " {ws}  {age}". Measured in display
+    // columns: a CJK or emoji label is twice as wide as its character count,
+    // and counting characters pushes the id and age off the right edge.
+    let fixed = 2 + 1 + display_width(&ws) + 2 + display_width(&age);
     let label_budget = width.saturating_sub(fixed).max(1);
-    let label = truncate_chars(&a.label, label_budget);
-    let pad = label_budget.saturating_sub(label.chars().count());
+    let label = truncate_to_width(&a.label, label_budget);
+    let pad = label_budget.saturating_sub(display_width(&label));
 
     let base: Style = if selected {
         theme::selected()

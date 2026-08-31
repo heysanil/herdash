@@ -490,3 +490,74 @@ fn rendering_never_panics_at_awkward_sizes() {
         let _ = render(&a, w, h);
     }
 }
+
+/// Column math must use display width, not character count. CJK and emoji are
+/// double-width, so an 11-character label occupies 22 columns — which silently
+/// pushed the workspace id and age off the right edge of the sidebar.
+#[test]
+fn wide_characters_do_not_push_the_id_and_age_off_the_sidebar() {
+    let mut snap = fixture();
+    snap.workspaces[2].label = "日本語のリポジトリ名前".into();
+    let mut a = App::new(SummariesMode::On);
+    a.apply_snapshot(&snap);
+
+    let row = lines_of(&a, 120, 40)
+        .into_iter()
+        .map(|l| l.chars().take(38).collect::<String>())
+        .find(|l| l.contains('日'))
+        .expect("the wide-character label must render");
+
+    assert!(row.contains("w3"), "workspace id survived: {row:?}");
+    assert!(
+        row.contains("~0s") || row.contains("0s"),
+        "age survived: {row:?}"
+    );
+}
+
+#[test]
+fn truncation_measures_display_columns_not_characters() {
+    use herdash::ui::{display_width, truncate_to_width};
+    assert_eq!(
+        display_width("日本語"),
+        6,
+        "three CJK glyphs occupy six columns"
+    );
+    assert_eq!(display_width("abc"), 3);
+
+    let t = truncate_to_width("日本語のテキスト", 7);
+    assert!(
+        display_width(&t) <= 7,
+        "{t:?} is {} columns",
+        display_width(&t)
+    );
+    assert!(t.ends_with('…'));
+    assert!("日本語のテキスト".starts_with(t.trim_end_matches('…')));
+
+    assert_eq!(
+        truncate_to_width("short", 20),
+        "short",
+        "untouched when it fits"
+    );
+    assert_eq!(truncate_to_width("anything", 0), "");
+}
+
+#[test]
+fn wrapping_measures_display_columns_and_never_splits_a_glyph() {
+    let out = wrap_to("日本語のテキストです ここも日本語", 10, 3);
+    assert!(!out.is_empty());
+    for line in &out {
+        assert!(
+            herdash::ui::display_width(line) <= 10,
+            "{line:?} is {} columns",
+            herdash::ui::display_width(line)
+        );
+        assert!(std::str::from_utf8(line.as_bytes()).is_ok());
+    }
+}
+
+/// A width narrower than a single glyph must not loop forever.
+#[test]
+fn wrapping_terminates_when_the_width_is_narrower_than_one_glyph() {
+    let out = wrap_to("日本語", 1, 3);
+    assert!(out.len() <= 3);
+}
