@@ -32,6 +32,15 @@ herdr's server exposes a Unix socket, path in `$HERDR_SOCKET_PATH`, defaulting
 to `~/.config/herdr/herdr.sock`. The protocol is newline-delimited JSON with no
 handshake and no auth. Wire protocol version is `20`.
 
+**herdr answers one request per connection and then closes the socket.**
+Verified against 0.8.2: a second request on the same stream fails with `EPIPE`,
+and pipelined requests receive one response followed by EOF. Every call
+therefore opens its own connection — on a Unix socket that costs tens of
+microseconds, which is irrelevant next to a 1 Hz poll, and it removes any
+long-lived connection to lose. (`events.subscribe` is the exception, turning
+the connection into an event stream, but per-pane subscriptions churn as panes
+come and go, so herdash polls.)
+
 Request: `{"id": "<caller-chosen>", "method": "<name>", "params": {...}}\n`
 Success: `{"id": "...", "result": {"type": "<name>", ...}}\n`
 Error:   `{"id": "...", "error": {"code": "...", "message": "..."}}\n`
@@ -49,8 +58,16 @@ Error:   `{"id": "...", "error": {"code": "...", "message": "..."}}\n`
 
 `agent.read`'s `source` enum is `visible | recent | recent_unwrapped |
 detection` — note the **underscore**; the CLI's `recent-unwrapped` spelling is
-rejected on the wire. Its result is nested under `result.read`, with the
-transcript in `result.read.text`.
+rejected on the wire. Its result is nested under `result.read` (discriminator
+`pane_read`), with the transcript in `result.read.text`.
+
+**A working agent cannot serve an oversized read.** It renders on the
+terminal's alternate screen, which has no scrollback, so herdr returns
+`agent_not_idle` rather than truncating. Measured on a 55-row pane:
+`recent_unwrapped` with `lines = 60` fails, `lines = 40` succeeds, and
+`visible` always works. The client therefore tries `recent_unwrapped` first and
+falls back to `visible`. Without the fallback, actively working agents — the
+ones most worth summarising — are the only ones that never get a summary.
 
 Reads do not mark an agent's tab as seen, so the dashboard is observationally
 inert: polling never flips a `done` agent back to `idle`.
@@ -62,6 +79,12 @@ inert: polling never flips a `done` agent back to `idle`.
 `agent` (kind, e.g. `claude`), `agent_status`, `workspace_id`, `tab_id`,
 `pane_id`, `terminal_id`, `terminal_title`, `terminal_title_stripped`, `cwd`,
 `foreground_cwd`, `focused`, `revision`, `state_change_seq`, `agent_session`.
+
+**`agent`, `cwd`, `terminal_title_stripped`, `terminal_title`, `label` and
+`foreground_cwd` are all `["string", "null"]` in the schema.** `#[serde(default)]`
+covers an *absent* key but not an explicit `null`, which is a hard
+deserialisation error — and one bad field would blank the whole dashboard. A
+`null_to_default` deserializer maps `null` onto the type's default.
 
 `agent_status` is one of `idle | working | blocked | done | unknown`.
 
@@ -110,10 +133,19 @@ EventStream ───────▶│  App { fleet, summaries, selection, conn
                     │                    │                              │
 poll task ─────────▶│                    ▼                              │
 (1 Hz snapshot)     │              ui::draw(frame)                      │
-                    │                                                   │
-summary worker ────▶│                                                   │
+                    │                    │                              │
+summary workers ───▶│         orchestrator::{plan_*, apply_update}       │
 (mpsc)              └───────────────────────────────────────────────────┘
 ```
+
+Because every herdr call opens its own connection, there is no shared socket
+and therefore no connection-owning task and no command channel: the poller and
+each summariser call `Client` directly and concurrently.
+
+The coordination logic — latched bypasses, forced refreshes racing in-flight
+calls, failure backoff, fleet throttling — lives in `orchestrator`, in the
+library rather than the binary, because none of it is testable from inside a
+binary and all of it is where bugs hide.
 
 Three inputs are multiplexed with `tokio::select!`:
 
@@ -432,3 +464,31 @@ Dependencies: `ratatui` 0.30, `crossterm` 0.29 (`event-stream`), `tokio` 1.53
 (`rt-multi-thread`, `net`, `sync`, `time`, `macros`), `reqwest` 0.13 (`json`, `rustls`,
 `rustls-native-certs`), `serde` 1 (`derive`), `serde_json` 1, `anyhow`, `clap` 4
 (`derive`).
+
+
+---
+
+## 13. Corrections from implementation
+
+Building and running this against the live server disproved four claims above,
+all of which had passed schema review. They are corrected inline; recorded here
+because each one is a trap for the next reader.
+
+1. **Connection lifetime.** The design assumed a long-lived multiplexed
+   connection. herdr closes after one response. The dashboard rendered
+   correctly for about seven seconds and then sat in `⟳ reconnecting`. Only
+   running the binary found this — the JSON schema documents 91 methods and
+   says nothing about connection lifetime.
+2. **Oversized reads on working agents.** `agent.read` with `lines = 200`
+   fails with `agent_not_idle` for any agent on the alternate screen, which is
+   every actively working agent.
+3. **Nullable strings.** Six fields the design treated as always-present are
+   `["string", "null"]`.
+4. **Fixture fidelity.** The hand-built fixture used a numeric `version`,
+   omitted `active_tab_id`, and named the read discriminator `agent_read`
+   instead of `pane_read` — a shape herdr could not produce. Tests passed
+   anyway because the structs ignore those fields, which is exactly how a
+   fixture stops guarding anything.
+
+The general lesson is recorded in `AGENTS.md`: the schema describes shapes, not
+behaviour. Protocol behaviour must be verified against a running server.

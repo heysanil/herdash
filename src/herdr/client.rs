@@ -240,11 +240,11 @@ impl Client {
                     })?;
             Connection::new(stream).request(method, params).await
         };
-        tokio::time::timeout(self.timeout, fut)
+        tokio::time::timeout(timeout, fut)
             .await
             .map_err(|_| ClientError::Timeout {
                 method: method.to_string(),
-                timeout: self.timeout,
+                timeout,
             })?
     }
 
@@ -305,7 +305,11 @@ impl Client {
             params.insert("lines".into(), json!(lines));
         }
         let env: ReadEnvelope = self
-            .request("agent.read", serde_json::Value::Object(params))
+            .request_within(
+                "agent.read",
+                serde_json::Value::Object(params),
+                READ_TIMEOUT,
+            )
             .await?;
         Ok(env.read)
     }
