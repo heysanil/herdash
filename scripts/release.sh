@@ -44,8 +44,16 @@ if [ -n "$(git rev-list HEAD..origin/main --count 2>/dev/null | grep -v '^0$' ||
 fi
 
 CURRENT="$(mise exec -- cargo metadata --format-version 1 --no-deps | jq -r '.packages[0].version')"
-step "Current version: $CURRENT  ->  $VERSION"
-[ "$CURRENT" != "$VERSION" ] || die "already at $VERSION"
+# Equal versions are legitimate: the very first release tags the version the
+# crate already carries, and a version bumped in an earlier commit needs only
+# a tag. The tag-existence check below is what actually prevents a re-release.
+if [ "$CURRENT" = "$VERSION" ]; then
+  NEEDS_BUMP=false
+  step "Version already $VERSION; tagging without a bump"
+else
+  NEEDS_BUMP=true
+  step "Current version: $CURRENT  ->  $VERSION"
+fi
 
 # Refuse to reuse a tag; retagging a published release breaks anyone pinned to it.
 if git rev-parse --verify --quiet "refs/tags/v$VERSION" >/dev/null; then
@@ -63,7 +71,9 @@ step "Running full check"
 mise run check
 
 step "Updating Cargo.toml"
-if $DRY_RUN; then
+if ! $NEEDS_BUMP; then
+  printf '  already at %s, nothing to change\n' "$VERSION" >&2
+elif $DRY_RUN; then
   printf '  (dry run) would set version = "%s"\n' "$VERSION" >&2
 else
   # Only the [package] version, which is the first `version =` in the file.
@@ -98,7 +108,9 @@ if $DRY_RUN; then
   step "Dry run — CHANGELOG entry that would be added:"
   sed 's/^/  /' .changelog.new >&2
   rm -f .changelog.new
-  git checkout -- Cargo.toml Cargo.lock 2>/dev/null || true
+  if $NEEDS_BUMP; then
+    git checkout -- Cargo.toml Cargo.lock 2>/dev/null || true
+  fi
   exit 0
 fi
 
@@ -111,7 +123,8 @@ mv CHANGELOG.tmp CHANGELOG.md
 rm -f .changelog.new
 
 step "Committing and tagging"
-git add Cargo.toml Cargo.lock CHANGELOG.md
+git add CHANGELOG.md
+$NEEDS_BUMP && git add Cargo.toml Cargo.lock
 git commit -q -m "chore(release): v$VERSION"
 git tag -a "v$VERSION" -m "herdash v$VERSION"
 
