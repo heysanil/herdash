@@ -312,9 +312,9 @@ Five agents under heavy activity: on the order of one cent per hour.
 ├────────────────────────────────────┬────────────────────────────────────────────┤
 │ acme-core ───────────────────── 3  │ feat-invoice-classification                │
 │ ⊘ feat-isolated-db-seeding w3R 3m  │ claude · w3P:p1 · acme-core · working 5m   │
-│   Waiting on approval to write to  │ ~/.herdr/worktrees/acme-core/feat-revenue… │
-│   the seeded Planetscale branch.   │                                            │
-│ ● feat-revenue-categoriz… w3P  5m  │ TASK                                       │
+│   Waiting on approval to write to  │ ~/.herdr/worktrees/acme-core/feat-invoice… │
+│   the seeded database branch.      │                                            │
+│ ● feat-invoice-classific… w3P  5m  │ TASK                                       │
 │   Verifying doc-accuracy findings  │ Verifying two documentation-accuracy       │
 │   on normalizer.ts.                │ findings from an external review of        │
 │ ○ feat-modular-reports    w3M  1h  │ normalizer.ts.                             │
@@ -322,7 +322,7 @@ Five agents under heavy activity: on the order of one cent per hour.
 │   query for team reports.          │ NOW                                        │
 │                                    │ Running `git show HEAD:…/normalizer.ts` to │
 │ widget ─────────────────────── 1   │ judge the verifier's F7(d) recommendation  │
-│ ● explore-widget-vs-midni… w3Q 12m │ rather than apply it blindly.              │
+│ ● explore-widget-vs-acme-… w3Q 12m │ rather than apply it blindly.              │
 │   Comparing repo organization      │                                            │
 │   between widget and acme-core.    │ RECENT                                     │
 │                                    │ · Confirmed F7(b); already test-guarded    │
