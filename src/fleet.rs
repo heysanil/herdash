@@ -44,7 +44,11 @@ impl RepoGroup {
 
     /// Urgency of the most urgent member; empty groups rank last.
     fn urgency(&self) -> u8 {
-        self.agents.iter().map(|a| a.status.urgency()).min().unwrap_or(u8::MAX)
+        self.agents
+            .iter()
+            .map(|a| a.status.urgency())
+            .min()
+            .unwrap_or(u8::MAX)
     }
 }
 
@@ -120,8 +124,11 @@ impl Timings {
 
 /// Merge agents with their workspace metadata, filter, group and sort.
 pub fn build(snapshot: &Snapshot, timings: &Timings, active_only: bool) -> Vec<RepoGroup> {
-    let workspaces: HashMap<&str, &WorkspaceInfo> =
-        snapshot.workspaces.iter().map(|w| (w.workspace_id.as_str(), w)).collect();
+    let workspaces: HashMap<&str, &WorkspaceInfo> = snapshot
+        .workspaces
+        .iter()
+        .map(|w| (w.workspace_id.as_str(), w))
+        .collect();
 
     let fallback = Instant::now();
     let mut by_repo: HashMap<Option<String>, Vec<Agent>> = HashMap::new();
@@ -135,16 +142,24 @@ pub fn build(snapshot: &Snapshot, timings: &Timings, active_only: bool) -> Vec<R
             .and_then(|w| w.worktree.as_ref())
             .map(|wt| wt.repo_name.clone())
             .filter(|r| !r.is_empty());
+        // Every one of these can be null on the wire, so fall back down a
+        // chain that ends at the pane id — a row must always be identifiable.
         let label = ws
             .map(|w| w.label.clone())
             .filter(|l| !l.is_empty())
-            .unwrap_or_else(|| info.terminal_title_stripped.clone());
+            .or_else(|| Some(info.terminal_title_stripped.clone()).filter(|t| !t.is_empty()))
+            .unwrap_or_else(|| info.pane_id.clone());
+        let kind = if info.agent.is_empty() {
+            "unknown".to_string()
+        } else {
+            info.agent.clone()
+        };
         let t = timings.map.get(&info.pane_id);
 
         by_repo.entry(repo.clone()).or_default().push(Agent {
             pane_id: info.pane_id.clone(),
             workspace_id: info.workspace_id.clone(),
-            kind: info.agent.clone(),
+            kind,
             title: info.terminal_title_stripped.clone(),
             label,
             repo,

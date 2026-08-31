@@ -22,6 +22,34 @@ pub struct SummarySlot {
     pub error: Option<String>,
 }
 
+/// Why summaries are or are not running.
+///
+/// A boolean would collapse two cases the user needs told apart: "you asked
+/// for this" and "I could not find a key".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SummariesMode {
+    On,
+    /// No API key resolved.
+    OffNoKey,
+    /// `--no-summaries` was passed.
+    OffByFlag,
+}
+
+impl SummariesMode {
+    pub fn enabled(self) -> bool {
+        matches!(self, Self::On)
+    }
+
+    /// Header annotation, or `None` when summaries are running.
+    pub fn note(self) -> Option<&'static str> {
+        match self {
+            Self::On => None,
+            Self::OffNoKey => Some("summaries off (no key)"),
+            Self::OffByFlag => Some("summaries off"),
+        }
+    }
+}
+
 /// Health of the herdr socket connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnState {
@@ -61,8 +89,11 @@ pub struct App {
     /// Narrow-terminal mode: detail replaces the sidebar.
     pub detail_open: bool,
     pub conn: ConnState,
-    pub summaries_enabled: bool,
+    pub summaries: SummariesMode,
     pub should_quit: bool,
+    /// Redraw counter, used to animate the in-flight indicator. Incremented
+    /// by the event loop so rendering stays a pure function of state.
+    pub tick: u64,
     /// Transient one-line message shown in the header.
     pub notice: Option<String>,
 
@@ -74,7 +105,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(summaries_enabled: bool) -> Self {
+    pub fn new(summaries: SummariesMode) -> Self {
         Self {
             groups: Vec::new(),
             slots: HashMap::new(),
@@ -85,8 +116,9 @@ impl App {
             show_help: false,
             detail_open: false,
             conn: ConnState::Connected,
-            summaries_enabled,
+            summaries,
             should_quit: false,
+            tick: 0,
             notice: None,
             timings: Timings::new(),
             last_snapshot: None,
@@ -104,6 +136,18 @@ impl App {
         self.slots.retain(|k, _| live.contains(k.as_str()));
     }
 
+    pub fn summaries_enabled(&self) -> bool {
+        self.summaries.enabled()
+    }
+
+    /// Every agent in the last snapshot, including ones the filter hides.
+    pub fn all_agent_ids(&self) -> Vec<String> {
+        self.last_snapshot
+            .as_ref()
+            .map(|s| s.agents.iter().map(|a| a.pane_id.clone()).collect())
+            .unwrap_or_default()
+    }
+
     /// Number of tracked agents. Exposed so tests can assert no leak.
     pub fn timings_len(&self) -> usize {
         self.timings.len()
@@ -111,28 +155,54 @@ impl App {
 
     /// Recompute groups from the retained snapshot, honouring the filter.
     fn rebuild(&mut self) {
-        let Some(snapshot) = self.last_snapshot.take() else { return };
-        let previous_index = self.selected_index();
+        // Capture the pre-rebuild order so a vanished selection can fall back
+        // to a real neighbour rather than to whatever now sits at its index.
+        let old_ids: Vec<String> = self.agents().iter().map(|a| a.pane_id.clone()).collect();
+        let old_index = self
+            .selected
+            .as_ref()
+            .and_then(|id| old_ids.iter().position(|old| old == id));
+
+        let Some(snapshot) = self.last_snapshot.take() else {
+            return;
+        };
         self.groups = fleet::build(&snapshot, &self.timings, self.active_only);
         self.last_snapshot = Some(snapshot);
-        self.reconcile_selection(previous_index);
+        self.reconcile_selection(&old_ids, old_index);
     }
 
-    /// Keep the selection on the same agent; if it vanished, fall back to the
-    /// nearest surviving row so the cursor does not jump to the top.
-    fn reconcile_selection(&mut self, previous_index: Option<usize>) {
-        let ids: Vec<String> = self.agents().iter().map(|a| a.pane_id.clone()).collect();
-        if ids.is_empty() {
+    /// Keep the selection on the same agent; if it vanished, walk outward
+    /// through the *previous* ordering for the closest survivor.
+    ///
+    /// Reusing the old numeric index would be wrong: agents can be inserted
+    /// and reordered in the same poll, so index `n` may now hold an unrelated
+    /// agent the user never selected.
+    fn reconcile_selection(&mut self, old_ids: &[String], old_index: Option<usize>) {
+        let visible: Vec<String> = self.agents().iter().map(|a| a.pane_id.clone()).collect();
+        if visible.is_empty() {
             self.selected = None;
             return;
         }
-        if let Some(sel) = &self.selected
-            && ids.iter().any(|id| id == sel)
+        if self
+            .selected
+            .as_ref()
+            .is_some_and(|id| visible.contains(id))
         {
             return;
         }
-        let idx = previous_index.unwrap_or(0).min(ids.len() - 1);
-        self.selected = Some(ids[idx].clone());
+        if let Some(center) = old_index {
+            for distance in 1..=old_ids.len() {
+                for candidate in [center.checked_add(distance), center.checked_sub(distance)] {
+                    if let Some(i) = candidate.filter(|&i| i < old_ids.len())
+                        && visible.contains(&old_ids[i])
+                    {
+                        self.selected = Some(old_ids[i].clone());
+                        return;
+                    }
+                }
+            }
+        }
+        self.selected = Some(visible[0].clone());
     }
 
     fn selected_index(&self) -> Option<usize> {
@@ -179,19 +249,23 @@ impl App {
     /// Apply a keypress. Returns work for the event loop; mutations that are
     /// purely local (selection, filters, overlays) happen here.
     pub fn on_key(&mut self, key: KeyEvent) -> Action {
-        // The help overlay is modal: it swallows everything except its own
-        // dismissal, so a stray `j` cannot silently move the hidden cursor.
+        // Ctrl-C is checked first and unconditionally: an escape hatch that a
+        // modal can swallow is not an escape hatch.
+        if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c')) {
+            self.should_quit = true;
+            return Action::Quit;
+        }
+
+        // The help overlay is otherwise modal: it swallows everything except
+        // its own dismissal, so a stray `j` cannot move the hidden cursor.
         if self.show_help {
-            if matches!(key.code, KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q')) {
+            if matches!(
+                key.code,
+                KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q')
+            ) {
                 self.show_help = false;
             }
             return Action::None;
-        }
-
-        if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c'))
-        {
-            self.should_quit = true;
-            return Action::Quit;
         }
 
         match key.code {

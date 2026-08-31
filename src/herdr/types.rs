@@ -3,7 +3,22 @@
 //! Every struct uses `#[serde(default)]` liberally and never denies unknown
 //! fields, so a herdr upgrade that adds fields cannot break the dashboard.
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
+
+/// Accept an explicit JSON `null` as the type's default.
+///
+/// This is not the same as `#[serde(default)]`, which only covers an *absent*
+/// key. herdr's schema declares `agent`, `cwd`, `terminal_title_stripped`,
+/// `terminal_title`, `label` and `foreground_cwd` as `["string", "null"]`, so
+/// a real server can send `null` for any of them — and `null` into `String`
+/// is a hard deserialisation error that would blank the whole dashboard.
+fn null_to_default<'de, D, T>(d: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    Ok(Option::<T>::deserialize(d)?.unwrap_or_default())
+}
 
 /// Agent lifecycle state as reported by herdr.
 ///
@@ -65,16 +80,19 @@ impl<'de> Deserialize<'de> for AgentStatus {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AgentInfo {
-    /// Agent kind, e.g. "claude", "codex".
+    /// Agent kind, e.g. "claude", "codex". Nullable on the wire.
+    #[serde(default, deserialize_with = "null_to_default")]
     pub agent: String,
     pub agent_status: AgentStatus,
     pub workspace_id: String,
     pub pane_id: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_default")]
     pub tab_id: String,
-    #[serde(default)]
+    /// Nullable on the wire.
+    #[serde(default, deserialize_with = "null_to_default")]
     pub terminal_title_stripped: String,
-    #[serde(default)]
+    /// Nullable on the wire.
+    #[serde(default, deserialize_with = "null_to_default")]
     pub cwd: String,
     #[serde(default)]
     pub focused: bool,
@@ -88,11 +106,11 @@ pub struct AgentInfo {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Worktree {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_default")]
     pub repo_name: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_default")]
     pub repo_root: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_default")]
     pub checkout_path: String,
     #[serde(default)]
     pub is_linked_worktree: bool,
@@ -101,7 +119,8 @@ pub struct Worktree {
 #[derive(Debug, Clone, Deserialize)]
 pub struct WorkspaceInfo {
     pub workspace_id: String,
-    #[serde(default)]
+    /// Nullable on the wire.
+    #[serde(default, deserialize_with = "null_to_default")]
     pub label: String,
     /// Absent for workspaces with no git checkout. Never index unconditionally.
     #[serde(default)]
@@ -123,8 +142,12 @@ pub struct SnapshotEnvelope {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ReadPayload {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_default")]
     pub text: String,
+    /// Which read source herdr actually served, e.g. `recent_unwrapped` or
+    /// `visible`. Present so callers can tell whether the fallback fired.
+    #[serde(default)]
+    pub source: Option<String>,
     #[serde(default)]
     pub revision: u64,
     #[serde(default)]

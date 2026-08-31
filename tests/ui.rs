@@ -6,7 +6,7 @@
 use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use herdash::app::{App, ConnState};
+use herdash::app::{App, ConnState, SummariesMode};
 use herdash::herdr::types::Snapshot;
 use herdash::summary::AgentSummary;
 use herdash::ui::{fmt_age, wrap_to};
@@ -22,7 +22,7 @@ fn fixture() -> Snapshot {
 }
 
 fn app() -> App {
-    let mut a = App::new(true);
+    let mut a = App::new(SummariesMode::On);
     a.apply_snapshot(&fixture());
     a
 }
@@ -52,7 +52,10 @@ fn summary() -> AgentSummary {
         headline: "Verifying doc-accuracy findings".into(),
         task: "Verify two documentation findings from an external review".into(),
         now: "Running git show to judge the recommendation".into(),
-        recent: vec!["Confirmed the first finding".into(), "Applied the comment fix".into()],
+        recent: vec![
+            "Confirmed the first finding".into(),
+            "Applied the comment fix".into(),
+        ],
     }
 }
 
@@ -89,7 +92,10 @@ fn wrap_of_empty_text_yields_nothing() {
 #[test]
 fn wrap_never_splits_a_multibyte_character() {
     let out = wrap_to(&"日本語".repeat(20), 7, 2);
-    assert!(out.iter().all(|l| std::str::from_utf8(l.as_bytes()).is_ok()));
+    assert!(
+        out.iter()
+            .all(|l| std::str::from_utf8(l.as_bytes()).is_ok())
+    );
     assert!(out.iter().all(|l| l.chars().count() <= 7), "{out:?}");
 }
 
@@ -113,7 +119,10 @@ fn the_sidebar_shows_a_header_for_every_repo_group() {
     let text = render(&app(), 120, 40);
     assert!(text.contains("alpha"), "named repo group header");
     assert!(text.contains("beta"), "named repo group header");
-    assert!(text.contains("ungrouped"), "fallback for workspaces with no worktree");
+    assert!(
+        text.contains("ungrouped"),
+        "fallback for workspaces with no worktree"
+    );
 }
 
 #[test]
@@ -128,13 +137,20 @@ fn the_blocked_agent_is_rendered_above_everything_else() {
     let lines = lines_of(&app(), 120, 40);
     let beta_at = lines.iter().position(|l| l.contains("feat-beta")).unwrap();
     let alpha_at = lines.iter().position(|l| l.contains("feat-alpha")).unwrap();
-    assert!(beta_at < alpha_at, "urgency drives order:\n{}", lines.join("\n"));
+    assert!(
+        beta_at < alpha_at,
+        "urgency drives order:\n{}",
+        lines.join("\n")
+    );
 }
 
 #[test]
 fn without_a_summary_the_second_line_falls_back_to_the_terminal_title() {
     let text = render(&app(), 120, 40);
-    assert!(text.contains("beta migration"), "terminal title keeps the row useful");
+    assert!(
+        text.contains("beta migration"),
+        "terminal title keeps the row useful"
+    );
 }
 
 #[test]
@@ -143,7 +159,10 @@ fn a_summary_headline_replaces_the_terminal_title() {
     a.slots.entry("w3:p1".into()).or_default().summary = Some(summary());
     let text = render(&a, 120, 40);
     assert!(text.contains("Verifying doc-accuracy"));
-    assert!(!text.contains("beta migration"), "the headline supersedes the raw title");
+    assert!(
+        !text.contains("beta migration"),
+        "the headline supersedes the raw title"
+    );
 }
 
 #[test]
@@ -151,6 +170,46 @@ fn an_in_flight_summary_shows_progress() {
     let mut a = app();
     a.slots.entry("w3:p1".into()).or_default().state.in_flight = true;
     assert!(render(&a, 120, 40).contains("summarising"));
+}
+
+/// The indicator animates off the redraw tick, so rendering stays a pure
+/// function of state rather than reading a clock.
+#[test]
+fn the_in_flight_indicator_animates_with_the_tick() {
+    let mut a = app();
+    a.slots.entry("w3:p1".into()).or_default().state.in_flight = true;
+    let frames: std::collections::HashSet<char> = (0..10)
+        .map(|t| {
+            a.tick = t;
+            let text = render(&a, 120, 40);
+            let line = text
+                .lines()
+                .find(|l| l.contains("summarising"))
+                .unwrap()
+                .to_string();
+            line.trim_start().chars().next().unwrap()
+        })
+        .collect();
+    assert!(
+        frames.len() > 1,
+        "expected distinct spinner frames, got {frames:?}"
+    );
+}
+
+#[test]
+fn the_header_distinguishes_no_key_from_an_explicit_flag() {
+    let mut no_key = App::new(SummariesMode::OffNoKey);
+    no_key.apply_snapshot(&fixture());
+    assert!(render(&no_key, 140, 40).contains("summaries off (no key)"));
+
+    let mut by_flag = App::new(SummariesMode::OffByFlag);
+    by_flag.apply_snapshot(&fixture());
+    let text = render(&by_flag, 140, 40);
+    assert!(text.contains("summaries off"));
+    assert!(
+        !text.contains("(no key)"),
+        "the flag case must not blame a missing key"
+    );
 }
 
 #[test]
@@ -168,7 +227,11 @@ fn a_failed_summary_is_surfaced_without_killing_the_row() {
 fn sidebar_columns(app: &App, w: u16, h: u16) -> Vec<String> {
     lines_of(app, w, h)
         .iter()
-        .map(|l| l.chars().take(herdash::ui::theme::SIDEBAR_WIDTH as usize).collect())
+        .map(|l| {
+            l.chars()
+                .take(herdash::ui::theme::SIDEBAR_WIDTH as usize)
+                .collect()
+        })
         .collect()
 }
 
@@ -176,7 +239,7 @@ fn sidebar_columns(app: &App, w: u16, h: u16) -> Vec<String> {
 fn a_long_label_is_truncated_rather_than_overflowing_the_sidebar() {
     let mut snap = fixture();
     snap.workspaces[2].label = "an-extremely-long-workspace-label-that-cannot-possibly-fit".into();
-    let mut a = App::new(true);
+    let mut a = App::new(SummariesMode::On);
     a.apply_snapshot(&snap);
     let cols = sidebar_columns(&a, 120, 40);
 
@@ -199,27 +262,30 @@ fn the_sidebar_border_is_never_overwritten_by_content() {
     for w in &mut snap.workspaces {
         w.label = "x".repeat(120);
     }
-    let mut a = App::new(true);
+    let mut a = App::new(SummariesMode::On);
     a.apply_snapshot(&snap);
     let lines = lines_of(&a, 120, 40);
     let border_col = (herdash::ui::theme::SIDEBAR_WIDTH - 1) as usize;
     // Skip the header rows and the footer, which span the full width.
     for line in lines.iter().skip(1).take(lines.len().saturating_sub(2)) {
         let ch = line.chars().nth(border_col).unwrap();
-        assert!(ch == '\u{2502}' || ch == ' ', "border column corrupted by {ch:?} in {line:?}");
+        assert!(
+            ch == '\u{2502}' || ch == ' ',
+            "border column corrupted by {ch:?} in {line:?}"
+        );
     }
 }
 
 #[test]
 fn an_empty_fleet_renders_an_explanatory_message() {
-    assert!(render(&App::new(true), 120, 40).contains("No agents"));
+    assert!(render(&App::new(SummariesMode::On), 120, 40).contains("No agents"));
 }
 
 #[test]
 fn filtering_everything_out_explains_how_to_get_back() {
     let mut snap = fixture();
     snap.agents.retain(|a| a.pane_id == "w2:p1"); // the idle one
-    let mut a = App::new(true);
+    let mut a = App::new(SummariesMode::On);
     a.apply_snapshot(&snap);
     a.on_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
     let text = render(&a, 120, 40);
@@ -232,7 +298,10 @@ fn a_long_selection_list_scrolls_to_keep_the_selection_visible() {
     a.on_key(KeyEvent::new(KeyCode::Char('G'), KeyModifiers::NONE));
     let last = a.selected_agent().unwrap().label.clone();
     let text = render(&a, 120, 14);
-    assert!(text.contains(&last), "selection scrolled out of view:\n{text}");
+    assert!(
+        text.contains(&last),
+        "selection scrolled out of view:\n{text}"
+    );
 }
 
 // ----------------------------------------------------------------- header --
@@ -254,7 +323,7 @@ fn the_header_shows_the_fleet_summary_when_present() {
 
 #[test]
 fn the_header_flags_disabled_summaries() {
-    let mut a = App::new(false);
+    let mut a = App::new(SummariesMode::OffNoKey);
     a.apply_snapshot(&fixture());
     assert!(render(&a, 140, 40).contains("summaries off"));
 }
@@ -262,14 +331,18 @@ fn the_header_flags_disabled_summaries() {
 #[test]
 fn the_header_flags_a_dropped_connection() {
     let mut a = app();
-    a.conn = ConnState::Reconnecting { since: Instant::now() };
+    a.conn = ConnState::Reconnecting {
+        since: Instant::now(),
+    };
     assert!(render(&a, 140, 40).contains("reconnecting"));
 }
 
 #[test]
 fn a_stale_fleet_still_renders_while_reconnecting() {
     let mut a = app();
-    a.conn = ConnState::Reconnecting { since: Instant::now() };
+    a.conn = ConnState::Reconnecting {
+        since: Instant::now(),
+    };
     assert!(
         render(&a, 140, 40).contains("feat-beta"),
         "last known state must stay on screen"
@@ -321,7 +394,7 @@ fn the_detail_pane_explains_itself_before_a_summary_arrives() {
 
 #[test]
 fn the_detail_pane_explains_when_summaries_are_off() {
-    let mut a = App::new(false);
+    let mut a = App::new(SummariesMode::OffNoKey);
     a.apply_snapshot(&fixture());
     assert!(render(&a, 140, 40).contains("Summaries are off"));
 }
@@ -348,7 +421,13 @@ fn the_help_overlay_documents_every_binding() {
     let mut a = app();
     a.show_help = true;
     let text = render(&a, 140, 40);
-    for hint in ["select an agent", "focus pane in herdr", "resummarise", "active-only", "quit"] {
+    for hint in [
+        "select an agent",
+        "focus pane in herdr",
+        "resummarise",
+        "active-only",
+        "quit",
+    ] {
         assert!(text.contains(hint), "help missing `{hint}`:\n{text}");
     }
 }
@@ -361,11 +440,17 @@ fn narrow_terminals_hide_the_detail_pane() {
     let id = a.selected.clone().unwrap();
     a.slots.entry(id).or_default().summary = Some(summary());
     let narrow = render(&a, 80, 30);
-    assert!(!narrow.contains("TASK"), "detail is hidden below 100 columns");
+    assert!(
+        !narrow.contains("TASK"),
+        "detail is hidden below 100 columns"
+    );
     assert!(narrow.contains("feat-beta"), "the sidebar still renders");
 
     a.detail_open = true;
-    assert!(render(&a, 80, 30).contains("TASK"), "→ opens detail full-width");
+    assert!(
+        render(&a, 80, 30).contains("TASK"),
+        "→ opens detail full-width"
+    );
 }
 
 #[test]
@@ -376,7 +461,10 @@ fn short_terminals_collapse_the_fleet_summary() {
     assert_eq!(count(&render(&a, 140, 40)), 1);
     let short = render(&a, 140, 12);
     assert_eq!(count(&short), 1);
-    assert!(short.contains("feat-beta"), "agents still fit on a short screen");
+    assert!(
+        short.contains("feat-beta"),
+        "agents still fit on a short screen"
+    );
 }
 
 #[test]
@@ -386,7 +474,14 @@ fn rendering_never_panics_at_awkward_sizes() {
     a.slots.entry(id).or_default().summary = Some(summary());
     a.fleet_summary = Some("fleet".into());
     for (w, h) in [
-        (1u16, 1u16), (2, 2), (20, 5), (40, 10), (99, 24), (100, 24), (140, 4), (300, 80),
+        (1u16, 1u16),
+        (2, 2),
+        (20, 5),
+        (40, 10),
+        (99, 24),
+        (100, 24),
+        (140, 4),
+        (300, 80),
     ] {
         let _ = render(&a, w, h);
     }

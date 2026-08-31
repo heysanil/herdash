@@ -42,8 +42,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     if let ConnState::Reconnecting { .. } = app.conn {
         spans.push(Span::styled("  ⟳ reconnecting", theme::alert()));
     }
-    if !app.summaries_enabled {
-        spans.push(Span::styled("  summaries off", theme::dim()));
+    if let Some(note) = app.summaries.note() {
+        spans.push(Span::styled(format!("  {note}"), theme::dim()));
     }
     if let Some(notice) = &app.notice {
         spans.push(Span::styled(format!("  {notice}"), theme::dim()));

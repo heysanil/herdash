@@ -7,5 +7,6 @@ pub mod app;
 pub mod config;
 pub mod fleet;
 pub mod herdr;
+pub mod orchestrator;
 pub mod summary;
 pub mod ui;

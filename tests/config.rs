@@ -12,8 +12,10 @@ use clap::Parser;
 use herdash::config::{Cli, resolve_api_key, resolve_socket};
 
 fn env_from(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
-    let map: HashMap<String, String> =
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    let map: HashMap<String, String> = pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
     move |k: &str| map.get(k).cloned()
 }
 
@@ -31,7 +33,11 @@ fn tempdir() -> PathBuf {
 #[test]
 fn the_socket_flag_wins_over_everything() {
     let env = env_from(&[("HERDR_SOCKET_PATH", "/from/env.sock")]);
-    let got = resolve_socket(Some(Path::new("/from/flag.sock")), &env, Path::new("/home/u"));
+    let got = resolve_socket(
+        Some(Path::new("/from/flag.sock")),
+        &env,
+        Path::new("/home/u"),
+    );
     assert_eq!(got, PathBuf::from("/from/flag.sock"));
 }
 
@@ -114,12 +120,17 @@ fn cli_defaults_match_the_spec() {
 fn cli_flags_parse() {
     let cli = Cli::parse_from([
         "herdash",
-        "--interval", "5",
-        "--cooldown", "90",
-        "--lines", "50",
-        "--model", "other/model",
+        "--interval",
+        "5",
+        "--cooldown",
+        "90",
+        "--lines",
+        "50",
+        "--model",
+        "other/model",
         "--no-summaries",
-        "--socket", "/x.sock",
+        "--socket",
+        "/x.sock",
     ]);
     assert_eq!(cli.interval, 5);
     assert_eq!(cli.cooldown, 90);

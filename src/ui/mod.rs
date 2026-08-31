@@ -115,9 +115,7 @@ pub fn wrap_to(text: &str, width: usize, max_lines: usize) -> Vec<String> {
 }
 
 fn ellipsize_last(mut lines: Vec<String>, width: usize, truncated: bool) -> Vec<String> {
-    if truncated
-        && let Some(last) = lines.last_mut()
-    {
+    if truncated && let Some(last) = lines.last_mut() {
         let keep = width.saturating_sub(1);
         let mut s: String = last.chars().take(keep).collect();
         s = s.trim_end().to_string();
@@ -139,5 +137,9 @@ pub fn fmt_age(elapsed: Duration, lower_bound: bool) -> String {
     } else {
         format!("{}d", s / 86_400)
     };
-    if lower_bound { format!("~{body}") } else { body }
+    if lower_bound {
+        format!("~{body}")
+    } else {
+        body
+    }
 }

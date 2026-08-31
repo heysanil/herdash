@@ -15,11 +15,19 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     if area.width < 4 || area.height == 0 {
         return;
     }
-    let inner = Rect { x: area.x + 1, y: area.y, width: area.width - 1, height: area.height };
+    let inner = Rect {
+        x: area.x + 1,
+        y: area.y,
+        width: area.width - 1,
+        height: area.height,
+    };
     let width = inner.width as usize;
 
     let Some(agent) = app.selected_agent() else {
-        frame.render_widget(Paragraph::new("Nothing selected.").style(theme::dim()), inner);
+        frame.render_widget(
+            Paragraph::new("Nothing selected.").style(theme::dim()),
+            inner,
+        );
         return;
     };
 
@@ -42,20 +50,36 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             ),
             theme::dim(),
         )),
-        Line::from(Span::styled(abbreviate_home(&agent.cwd, width), theme::dim())),
+        Line::from(Span::styled(
+            abbreviate_home(&agent.cwd, width),
+            theme::dim(),
+        )),
         Line::from(""),
     ];
 
     let slot = app.slots.get(&agent.pane_id);
 
     if let Some(err) = slot.and_then(|s| s.error.as_ref()) {
-        lines.push(Line::from(Span::styled("⚠ summary unavailable", theme::alert())));
+        lines.push(Line::from(Span::styled(
+            "⚠ summary unavailable",
+            theme::alert(),
+        )));
         for l in wrap_to(err, width, 3) {
             lines.push(Line::from(Span::styled(l, theme::dim())));
         }
     } else if let Some(summary) = slot.and_then(|s| s.summary.as_ref()) {
-        section(&mut lines, "TASK", &[or_dash(&summary.task).to_string()], width);
-        section(&mut lines, "NOW", &[or_dash(&summary.now).to_string()], width);
+        section(
+            &mut lines,
+            "TASK",
+            &[or_dash(&summary.task).to_string()],
+            width,
+        );
+        section(
+            &mut lines,
+            "NOW",
+            &[or_dash(&summary.now).to_string()],
+            width,
+        );
         let recent: Vec<String> = if summary.recent.is_empty() {
             vec![or_dash("").to_string()]
         } else {
@@ -76,7 +100,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 theme::dim(),
             )));
         }
-    } else if !app.summaries_enabled {
+    } else if !app.summaries_enabled() {
         for l in wrap_to(
             "Summaries are off. Set OPENROUTER_API_KEY or drop a key in ~/.openrouter-key.",
             width,
@@ -100,7 +124,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn section(lines: &mut Vec<Line<'static>>, title: &str, body: &[String], width: usize) {
-    lines.push(Line::from(Span::styled(title.to_string(), theme::heading())));
+    lines.push(Line::from(Span::styled(
+        title.to_string(),
+        theme::heading(),
+    )));
     for para in body {
         for l in wrap_to(para, width, 6) {
             lines.push(Line::from(Span::styled(l, theme::label())));
@@ -110,11 +137,20 @@ fn section(lines: &mut Vec<Line<'static>>, title: &str, body: &[String], width: 
 }
 
 fn bullets(lines: &mut Vec<Line<'static>>, title: &str, items: &[String], width: usize) {
-    lines.push(Line::from(Span::styled(title.to_string(), theme::heading())));
+    lines.push(Line::from(Span::styled(
+        title.to_string(),
+        theme::heading(),
+    )));
     for item in items {
-        for (i, l) in wrap_to(item, width.saturating_sub(2), 3).into_iter().enumerate() {
+        for (i, l) in wrap_to(item, width.saturating_sub(2), 3)
+            .into_iter()
+            .enumerate()
+        {
             let prefix = if i == 0 { "· " } else { "  " };
-            lines.push(Line::from(Span::styled(format!("{prefix}{l}"), theme::label())));
+            lines.push(Line::from(Span::styled(
+                format!("{prefix}{l}"),
+                theme::label(),
+            )));
         }
     }
 }
@@ -130,6 +166,9 @@ fn abbreviate_home(path: &str, width: usize) -> String {
         return shortened;
     }
     let keep = width.saturating_sub(1);
-    let tail: String = shortened.chars().skip(shortened.chars().count() - keep).collect();
+    let tail: String = shortened
+        .chars()
+        .skip(shortened.chars().count() - keep)
+        .collect();
     format!("…{tail}")
 }

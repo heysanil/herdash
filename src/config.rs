@@ -5,6 +5,8 @@ use std::time::Duration;
 
 use clap::Parser;
 
+use crate::app::SummariesMode;
+
 /// Terminal dashboard for herdr agent fleets.
 #[derive(Debug, Clone, Parser)]
 #[command(name = "herdash", version, about)]
@@ -36,7 +38,9 @@ pub struct Cli {
 
 /// The user's home directory, falling back to `.` if it cannot be determined.
 pub fn home_dir() -> PathBuf {
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."))
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// Resolve the herdr socket: `--socket`, then `$HERDR_SOCKET_PATH`, then
@@ -70,13 +74,19 @@ pub fn resolve_api_key(env: &dyn Fn(&str) -> Option<String>, home: &Path) -> Opt
     }
     let contents = std::fs::read_to_string(home.join(".openrouter-key")).ok()?;
     let trimmed = contents.trim().to_string();
-    if trimmed.is_empty() { None } else { Some(trimmed) }
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
 }
 
 /// Bundle of resolved runtime settings.
 #[derive(Debug, Clone)]
 pub struct Settings {
     pub socket: PathBuf,
+    /// Distinguishes "you turned it off" from "no key found".
+    pub summaries: SummariesMode,
     pub api_key: Option<String>,
     pub model: String,
     pub interval: Duration,
@@ -89,10 +99,22 @@ impl Settings {
     pub fn from_cli(cli: &Cli) -> Self {
         let home = home_dir();
         let env = |k: &str| std::env::var(k).ok();
-        let api_key = if cli.no_summaries { None } else { resolve_api_key(&env, &home) };
+        let api_key = if cli.no_summaries {
+            None
+        } else {
+            resolve_api_key(&env, &home)
+        };
+        let summaries = if cli.no_summaries {
+            SummariesMode::OffByFlag
+        } else if api_key.is_some() {
+            SummariesMode::On
+        } else {
+            SummariesMode::OffNoKey
+        };
         Self {
             socket: resolve_socket(cli.socket.as_deref(), &env, &home),
             api_key,
+            summaries,
             model: cli.model.clone(),
             interval: Duration::from_secs(cli.interval.max(1)),
             cooldown: Duration::from_secs(cli.cooldown),
@@ -102,6 +124,6 @@ impl Settings {
 
     /// Summaries run only when a key resolved and `--no-summaries` was absent.
     pub fn summaries_enabled(&self) -> bool {
-        self.api_key.is_some()
+        self.summaries.enabled()
     }
 }

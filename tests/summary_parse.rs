@@ -31,7 +31,8 @@ fn an_absent_recent_array_defaults_to_empty() {
 
 #[test]
 fn blank_recent_entries_are_dropped_and_the_list_is_capped() {
-    let body = wrap(r#"{"headline":"h","task":"t","now":"n","recent":["a","  ","b","c","d","e","f"]}"#);
+    let body =
+        wrap(r#"{"headline":"h","task":"t","now":"n","recent":["a","  ","b","c","d","e","f"]}"#);
     let s = parse_agent_response(&body).unwrap();
     assert_eq!(s.recent, vec!["a", "b", "c", "d", "e"]);
 }
@@ -39,9 +40,8 @@ fn blank_recent_entries_are_dropped_and_the_list_is_capped() {
 #[test]
 fn an_overlong_headline_is_truncated_on_a_character_boundary() {
     let long = "é".repeat(200);
-    let body = wrap(
-        &serde_json::json!({"headline": long, "task":"t","now":"n","recent":[]}).to_string(),
-    );
+    let body =
+        wrap(&serde_json::json!({"headline": long, "task":"t","now":"n","recent":[]}).to_string());
     let s = parse_agent_response(&body).unwrap();
     assert!(s.headline.chars().count() <= 60);
     assert!(s.headline.ends_with('…'));
@@ -105,15 +105,27 @@ fn a_long_transcript_keeps_its_tail() {
     let t = format!("{}\nTHE VERY LAST LINE\n", "x".repeat(50_000));
     let clamped = clamp_transcript(&t, 1024);
     assert!(clamped.len() <= 1024);
-    assert!(clamped.contains("THE VERY LAST LINE"), "recent output matters most");
+    assert!(
+        clamped.contains("THE VERY LAST LINE"),
+        "recent output matters most"
+    );
 }
 
+/// `clamp_transcript` returns `&str`, so asserting the result is valid UTF-8
+/// proves nothing — it could not be otherwise. Assert instead that the result
+/// is an exact suffix of the input, which is what "cut on a boundary" means.
 #[test]
-fn clamping_never_splits_a_multibyte_character() {
+fn clamping_cuts_on_a_character_boundary_and_keeps_a_true_suffix() {
     let t = "日本語のテキスト".repeat(500);
     let clamped = clamp_transcript(&t, 100);
-    assert!(std::str::from_utf8(clamped.as_bytes()).is_ok());
     assert!(clamped.len() <= 100);
+    assert!(!clamped.is_empty());
+    assert!(
+        t.ends_with(clamped),
+        "the clamped text must be a real suffix of the input"
+    );
+    // A boundary-safe cut means the character count is exactly len/3 here.
+    assert!(clamped.chars().count() > 0);
 }
 
 #[test]
@@ -129,12 +141,16 @@ fn the_request_body_demands_strict_structured_output() {
     assert_eq!(b["model"], "meta-llama/llama-4-scout:nitro");
     assert_eq!(b["response_format"]["type"], "json_schema");
     assert_eq!(b["response_format"]["json_schema"]["strict"], true);
-    let required =
-        b["response_format"]["json_schema"]["schema"]["required"].as_array().unwrap();
+    let required = b["response_format"]["json_schema"]["schema"]["required"]
+        .as_array()
+        .unwrap();
     for field in ["headline", "task", "now", "recent"] {
         assert!(required.iter().any(|r| r == field), "missing {field}");
     }
-    assert_eq!(b["response_format"]["json_schema"]["schema"]["additionalProperties"], false);
+    assert_eq!(
+        b["response_format"]["json_schema"]["schema"]["additionalProperties"],
+        false
+    );
     let user = b["messages"][1]["content"].as_str().unwrap();
     assert!(user.contains("transcript here"));
 }
@@ -144,13 +160,20 @@ fn the_fleet_request_carries_every_headline_and_no_schema() {
     let b = fleet_request_body("m", &["one".to_string(), "two".to_string()]);
     let user = b["messages"][1]["content"].as_str().unwrap();
     assert!(user.contains("one") && user.contains("two"));
-    assert!(b.get("response_format").is_none(), "the overview is prose, not JSON");
+    assert!(
+        b.get("response_format").is_none(),
+        "the overview is prose, not JSON"
+    );
 }
 
 #[test]
 fn the_fleet_response_is_plain_prose() {
     let body = wrap("Two agents are converging on billing; one needs approval.");
-    assert!(parse_fleet_response(&body).unwrap().starts_with("Two agents"));
+    assert!(
+        parse_fleet_response(&body)
+            .unwrap()
+            .starts_with("Two agents")
+    );
 }
 
 #[test]

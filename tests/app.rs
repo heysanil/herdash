@@ -1,7 +1,7 @@
 //! Selection, filtering and key handling.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use herdash::app::{Action, App, Row};
+use herdash::app::{Action, App, Row, SummariesMode};
 use herdash::herdr::types::Snapshot;
 
 const SNAPSHOT_FIXTURE: &str = include_str!("fixtures/snapshot.json");
@@ -12,7 +12,7 @@ fn fixture() -> Snapshot {
 }
 
 fn app_with_fixture() -> App {
-    let mut app = App::new(true);
+    let mut app = App::new(SummariesMode::On);
     app.apply_snapshot(&fixture());
     app
 }
@@ -26,7 +26,10 @@ fn rows_interleave_group_headers_with_their_agents() {
     let app = app_with_fixture();
     let rows = app.rows();
     assert!(matches!(rows[0], Row::Group(_)), "a group header leads");
-    assert_eq!(rows.iter().filter(|r| matches!(r, Row::Agent(_))).count(), 5);
+    assert_eq!(
+        rows.iter().filter(|r| matches!(r, Row::Agent(_))).count(),
+        5
+    );
 }
 
 #[test]
@@ -50,9 +53,16 @@ fn selection_clamps_at_both_ends() {
     let mut app = app_with_fixture();
     let order: Vec<String> = app.agents().iter().map(|a| a.pane_id.clone()).collect();
     app.on_key(key('k'));
-    assert_eq!(app.selected.as_deref(), Some(order[0].as_str()), "already at the top");
+    assert_eq!(
+        app.selected.as_deref(),
+        Some(order[0].as_str()),
+        "already at the top"
+    );
     app.on_key(key('G'));
-    assert_eq!(app.selected.as_deref(), Some(order.last().unwrap().as_str()));
+    assert_eq!(
+        app.selected.as_deref(),
+        Some(order.last().unwrap().as_str())
+    );
     app.on_key(key('j'));
     assert_eq!(
         app.selected.as_deref(),
@@ -115,7 +125,10 @@ fn stale_summary_slots_are_pruned_when_agents_disappear() {
     app.apply_snapshot(&snap);
 
     assert!(app.slots.contains_key("w1:p1"));
-    assert!(!app.slots.contains_key("w3:p1"), "no unbounded growth over a long session");
+    assert!(
+        !app.slots.contains_key("w3:p1"),
+        "no unbounded growth over a long session"
+    );
 }
 
 #[test]
@@ -134,7 +147,11 @@ fn a_toggles_the_active_only_filter_and_takes_effect_immediately() {
     assert_eq!(app.agents().len(), 5);
     app.on_key(key('a'));
     assert!(app.active_only);
-    assert_eq!(app.agents().len(), 3, "the filter applies without waiting for a poll");
+    assert_eq!(
+        app.agents().len(),
+        3,
+        "the filter applies without waiting for a poll"
+    );
     app.on_key(key('a'));
     assert_eq!(app.agents().len(), 5);
 }
@@ -207,7 +224,10 @@ fn help_swallows_navigation_keys_while_open() {
     let before = app.selected.clone();
     app.on_key(key('?'));
     app.on_key(key('j'));
-    assert_eq!(app.selected, before, "navigation must not happen behind the overlay");
+    assert_eq!(
+        app.selected, before,
+        "navigation must not happen behind the overlay"
+    );
     assert!(app.show_help, "and the overlay stays open");
 }
 
@@ -217,7 +237,10 @@ fn quitting_from_the_help_overlay_only_closes_it() {
     app.on_key(key('?'));
     assert_eq!(app.on_key(key('q')), Action::None);
     assert!(!app.show_help);
-    assert!(!app.should_quit, "the first q dismisses help rather than exiting");
+    assert!(
+        !app.should_quit,
+        "the first q dismisses help rather than exiting"
+    );
 }
 
 #[test]
@@ -231,9 +254,98 @@ fn arrows_open_and_close_detail_for_narrow_terminals() {
 
 #[test]
 fn keys_are_inert_with_no_agents() {
-    let mut app = App::new(true);
+    let mut app = App::new(SummariesMode::On);
     assert_eq!(app.on_key(key('j')), Action::None);
-    assert_eq!(app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)), Action::None);
+    assert_eq!(
+        app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        Action::None
+    );
     assert_eq!(app.on_key(key('r')), Action::None);
     assert_eq!(app.on_key(key('R')), Action::None);
+}
+
+/// Index reuse is not "nearest": agents can be inserted and reordered in the
+/// same poll, so the old index may now hold an agent the user never chose.
+#[test]
+fn selection_falls_back_to_a_real_neighbour_not_whatever_took_the_index() {
+    let mut app = app_with_fixture();
+    let order: Vec<String> = app.agents().iter().map(|a| a.pane_id.clone()).collect();
+    let selected = order[2].clone();
+    while app.selected.as_ref() != Some(&selected) {
+        app.on_key(key('j'));
+    }
+
+    let mut snap = fixture();
+    snap.agents.retain(|a| a.pane_id != selected);
+    // Insert two blocked agents in a repo that sorts before every existing
+    // group, shifting every index by two.
+    let template = snap
+        .agents
+        .iter()
+        .find(|a| a.pane_id == "w3:p1")
+        .unwrap()
+        .clone();
+    for n in 0..2 {
+        let mut extra = template.clone();
+        extra.pane_id = format!("wA{n}:p1");
+        extra.workspace_id = format!("wA{n}");
+        snap.agents.push(extra);
+        let mut ws = snap.workspaces[2].clone();
+        ws.workspace_id = format!("wA{n}");
+        ws.label = format!("aaa-{n}");
+        if let Some(wt) = ws.worktree.as_mut() {
+            wt.repo_name = "aaa".into();
+        }
+        snap.workspaces.push(ws);
+    }
+    app.apply_snapshot(&snap);
+
+    let new_order: Vec<String> = app.agents().iter().map(|a| a.pane_id.clone()).collect();
+    assert_ne!(
+        new_order[2], selected,
+        "the removed agent is gone and its index now holds someone else"
+    );
+    assert_eq!(
+        app.selected.as_deref(),
+        Some(order[3].as_str()),
+        "selection must land on the removed agent's real neighbour ({}), \
+         not on whoever now occupies index 2 ({})",
+        order[3],
+        new_order[2]
+    );
+}
+
+/// An escape hatch a modal can swallow is not an escape hatch.
+#[test]
+fn ctrl_c_quits_even_with_the_help_overlay_open() {
+    let mut app = app_with_fixture();
+    app.on_key(key('?'));
+    assert!(app.show_help);
+    let action = app.on_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    assert_eq!(action, Action::Quit);
+    assert!(app.should_quit);
+}
+
+#[test]
+fn all_agent_ids_includes_agents_the_filter_hides() {
+    let mut app = app_with_fixture();
+    app.on_key(key('a'));
+    assert_eq!(app.agents().len(), 3);
+    assert_eq!(app.all_agent_ids().len(), 5);
+}
+
+#[test]
+fn all_agent_ids_is_empty_before_the_first_snapshot() {
+    assert!(App::new(SummariesMode::On).all_agent_ids().is_empty());
+}
+
+#[test]
+fn the_summaries_mode_distinguishes_no_key_from_the_flag() {
+    use herdash::app::SummariesMode as M;
+    assert!(M::On.enabled());
+    assert!(!M::OffNoKey.enabled());
+    assert!(!M::OffByFlag.enabled());
+    assert_eq!(M::On.note(), None);
+    assert_eq!(M::OffNoKey.note(), Some("summaries off (no key)"));
+    assert_eq!(M::OffByFlag.note(), Some("summaries off"));
 }

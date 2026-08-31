@@ -46,9 +46,20 @@ fn snapshot_fixture_deserializes_including_missing_worktree() {
     let snap: Snapshot = serde_json::from_value(v["result"]["snapshot"].clone()).unwrap();
     assert_eq!(snap.agents.len(), 5);
     assert_eq!(snap.workspaces.len(), 5);
-    let w4 = snap.workspaces.iter().find(|w| w.workspace_id == "w4").unwrap();
-    assert!(w4.worktree.is_none(), "workspaces with no checkout omit `worktree`");
-    let w1 = snap.workspaces.iter().find(|w| w.workspace_id == "w1").unwrap();
+    let w4 = snap
+        .workspaces
+        .iter()
+        .find(|w| w.workspace_id == "w4")
+        .unwrap();
+    assert!(
+        w4.worktree.is_none(),
+        "workspaces with no checkout omit `worktree`"
+    );
+    let w1 = snap
+        .workspaces
+        .iter()
+        .find(|w| w.workspace_id == "w1")
+        .unwrap();
     assert_eq!(w1.worktree.as_ref().unwrap().repo_name, "alpha");
     let mystery = snap.agents.iter().find(|a| a.pane_id == "w5:p1").unwrap();
     assert_eq!(mystery.agent_status, AgentStatus::Unknown);
@@ -85,8 +96,14 @@ async fn request_skips_lines_that_are_not_its_response() {
         let mut buf = [0u8; 1024];
         let _ = server_side.read(&mut buf).await;
         // An unsolicited event, then a blank line, then the real answer.
-        server_side.write_all(b"{\"event\":\"pane.updated\"}\n\n").await.unwrap();
-        server_side.write_all(b"{\"id\":\"1\",\"result\":{\"type\":\"pong\"}}\n").await.unwrap();
+        server_side
+            .write_all(b"{\"event\":\"pane.updated\"}\n\n")
+            .await
+            .unwrap();
+        server_side
+            .write_all(b"{\"id\":\"1\",\"result\":{\"type\":\"pong\"}}\n")
+            .await
+            .unwrap();
     });
 
     let v: serde_json::Value = conn.request("ping", json!({})).await.unwrap();
@@ -102,7 +119,9 @@ async fn request_surfaces_error_envelopes_as_errors() {
         let mut buf = [0u8; 1024];
         let _ = server_side.read(&mut buf).await;
         server_side
-            .write_all(b"{\"id\":\"1\",\"error\":{\"code\":\"invalid_request\",\"message\":\"boom\"}}\n")
+            .write_all(
+                b"{\"id\":\"1\",\"error\":{\"code\":\"invalid_request\",\"message\":\"boom\"}}\n",
+            )
             .await
             .unwrap();
     });
@@ -139,4 +158,62 @@ fn read_result_extracts_nested_text() {
     let env: ReadEnvelope = serde_json::from_value(v["result"].clone()).unwrap();
     assert!(env.read.text.contains("Now editing proration()"));
     assert_eq!(env.read.revision, 10);
+}
+
+/// herdr's schema declares `agent`, `cwd` and `terminal_title_stripped` as
+/// `["string", "null"]`. `#[serde(default)]` only covers an *absent* key, so
+/// an explicit `null` would otherwise be a hard error that blanks the whole
+/// dashboard.
+#[test]
+fn explicit_nulls_deserialize_to_defaults_rather_than_failing() {
+    let v: serde_json::Value = serde_json::from_str(SNAPSHOT_FIXTURE).unwrap();
+    let snap: Snapshot = serde_json::from_value(v["result"]["snapshot"].clone()).unwrap();
+    let nulled = snap.agents.iter().find(|a| a.pane_id == "w5:p1").unwrap();
+    assert_eq!(nulled.agent, "");
+    assert_eq!(nulled.cwd, "");
+    assert_eq!(nulled.terminal_title_stripped, "");
+}
+
+#[test]
+fn a_null_heavy_payload_never_fails_to_parse() {
+    let raw = serde_json::json!({
+        "agents": [{
+            "agent": null,
+            "agent_status": "working",
+            "workspace_id": "w9",
+            "pane_id": "w9:p1",
+            "tab_id": null,
+            "terminal_title_stripped": null,
+            "cwd": null
+        }],
+        "workspaces": [{ "workspace_id": "w9", "label": null, "worktree": null }]
+    });
+    let snap: Snapshot = serde_json::from_value(raw).unwrap();
+    assert_eq!(snap.agents.len(), 1);
+    assert!(snap.workspaces[0].worktree.is_none());
+    assert_eq!(snap.workspaces[0].label, "");
+}
+
+/// The fixture must be a shape herdr could actually produce, or it silently
+/// stops guarding anything.
+#[test]
+fn the_fixture_matches_the_real_wire_shape() {
+    let v: serde_json::Value = serde_json::from_str(SNAPSHOT_FIXTURE).unwrap();
+    let snap = &v["result"]["snapshot"];
+    assert!(
+        snap["version"].is_string(),
+        "herdr reports version as a string, e.g. \"0.8.2\""
+    );
+    assert_eq!(snap["protocol"], 20);
+    for w in snap["workspaces"].as_array().unwrap() {
+        assert!(
+            w["active_tab_id"].is_string(),
+            "every workspace carries active_tab_id"
+        );
+    }
+    let read: serde_json::Value = serde_json::from_str(READ_FIXTURE).unwrap();
+    assert_eq!(
+        read["result"]["type"], "pane_read",
+        "the discriminator is pane_read"
+    );
 }

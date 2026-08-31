@@ -103,7 +103,10 @@ fn content_of(body: &str) -> Result<String> {
     let v: Value = serde_json::from_str(body)
         .with_context(|| format!("OpenRouter returned non-JSON: {}", first_chars(body, 200)))?;
     if let Some(err) = v.get("error") {
-        let msg = err.get("message").and_then(|m| m.as_str()).unwrap_or("unknown error");
+        let msg = err
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("unknown error");
         bail!("OpenRouter error: {msg}");
     }
     v["choices"][0]["message"]["content"]
@@ -116,7 +119,10 @@ fn content_of(body: &str) -> Result<String> {
 pub fn parse_agent_response(body: &str) -> Result<AgentSummary> {
     let content = content_of(body)?;
     let summary: AgentSummary = serde_json::from_str(content.trim()).with_context(|| {
-        format!("model did not return the requested schema: {}", first_chars(&content, 200))
+        format!(
+            "model did not return the requested schema: {}",
+            first_chars(&content, 200)
+        )
     })?;
     Ok(summary.sanitized())
 }
@@ -139,7 +145,11 @@ impl OpenRouter {
             .timeout(std::time::Duration::from_secs(45))
             .build()
             .expect("reqwest client");
-        Self { client, api_key, model }
+        Self {
+            client,
+            api_key,
+            model,
+        }
     }
 
     async fn post(&self, body: Value) -> Result<String> {
@@ -152,7 +162,10 @@ impl OpenRouter {
             .await
             .context("OpenRouter request failed")?;
         let status = resp.status();
-        let text = resp.text().await.context("could not read OpenRouter response")?;
+        let text = resp
+            .text()
+            .await
+            .context("could not read OpenRouter response")?;
         if !status.is_success() {
             // Parse anyway: OpenRouter puts a useful message in the error body.
             if let Ok(v) = serde_json::from_str::<Value>(&text)
@@ -169,12 +182,16 @@ impl OpenRouter {
 #[async_trait]
 impl Summarizer for OpenRouter {
     async fn summarize_agent(&self, transcript: &str) -> Result<AgentSummary> {
-        let body = self.post(agent_request_body(&self.model, transcript)).await?;
+        let body = self
+            .post(agent_request_body(&self.model, transcript))
+            .await?;
         parse_agent_response(&body)
     }
 
     async fn summarize_fleet(&self, headlines: &[String]) -> Result<String> {
-        let body = self.post(fleet_request_body(&self.model, headlines)).await?;
+        let body = self
+            .post(fleet_request_body(&self.model, headlines))
+            .await?;
         parse_fleet_response(&body)
     }
 }

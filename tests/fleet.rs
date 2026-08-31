@@ -7,6 +7,12 @@ use herdash::herdr::types::{AgentStatus, Snapshot};
 
 const SNAPSHOT_FIXTURE: &str = include_str!("fixtures/snapshot.json");
 
+/// A base instant safely in the future, so subtracting test durations can
+/// never underflow `Instant` on a machine that booted moments ago.
+fn base() -> Instant {
+    Instant::now() + Duration::from_secs(3600)
+}
+
 fn fixture() -> Snapshot {
     let v: serde_json::Value = serde_json::from_str(SNAPSHOT_FIXTURE).unwrap();
     serde_json::from_value(v["result"]["snapshot"].clone()).unwrap()
@@ -20,7 +26,11 @@ fn built(active_only: bool) -> Vec<fleet::RepoGroup> {
 }
 
 fn find<'a>(groups: &'a [fleet::RepoGroup], pane: &str) -> &'a fleet::Agent {
-    groups.iter().flat_map(|g| g.agents.iter()).find(|a| a.pane_id == pane).unwrap()
+    groups
+        .iter()
+        .flat_map(|g| g.agents.iter())
+        .find(|a| a.pane_id == pane)
+        .unwrap()
 }
 
 #[test]
@@ -61,7 +71,11 @@ fn agents_sort_by_urgency_within_a_group() {
 #[test]
 fn groups_sort_by_their_most_urgent_member() {
     let groups = built(false);
-    assert_eq!(groups[0].name(), "beta", "beta holds the only blocked agent");
+    assert_eq!(
+        groups[0].name(),
+        "beta",
+        "beta holds the only blocked agent"
+    );
 }
 
 /// Regression guard for spec §8.2: `ungrouped` loses ties but must never
@@ -83,7 +97,8 @@ fn ungrouped_sorts_last_only_among_equally_urgent_groups() {
 fn ungrouped_loses_a_tie_against_an_equally_urgent_named_repo() {
     // Give alpha a `done` agent too, so both groups tie at urgency 1.
     let mut snap = fixture();
-    snap.agents.retain(|a| a.workspace_id == "w1" || a.workspace_id == "w4");
+    snap.agents
+        .retain(|a| a.workspace_id == "w1" || a.workspace_id == "w4");
     snap.agents[0].agent_status = AgentStatus::from_wire("done");
     let mut t = Timings::new();
     t.observe(&snap, Instant::now());
@@ -119,9 +134,12 @@ fn an_empty_snapshot_yields_no_groups() {
 fn timings_reset_status_age_when_state_change_seq_moves() {
     let mut snap = fixture();
     let mut t = Timings::new();
-    let t0 = Instant::now() - Duration::from_secs(600);
+    let t0 = base() - Duration::from_secs(600);
     t.observe(&snap, t0);
-    assert_eq!(find(&fleet::build(&snap, &t, false), "w1:p1").status_since, t0);
+    assert_eq!(
+        find(&fleet::build(&snap, &t, false), "w1:p1").status_since,
+        t0
+    );
 
     // Same seq: age must not move.
     t.observe(&snap, t0 + Duration::from_secs(60));
@@ -135,7 +153,10 @@ fn timings_reset_status_age_when_state_change_seq_moves() {
     snap.agents[0].state_change_seq = 101;
     let t2 = t0 + Duration::from_secs(120);
     t.observe(&snap, t2);
-    assert_eq!(find(&fleet::build(&snap, &t, false), "w1:p1").status_since, t2);
+    assert_eq!(
+        find(&fleet::build(&snap, &t, false), "w1:p1").status_since,
+        t2
+    );
 }
 
 #[test]
@@ -165,7 +186,11 @@ fn timings_forget_agents_that_disappear() {
     assert_eq!(t.len(), 5);
     snap.agents.retain(|a| a.pane_id == "w1:p1");
     t.observe(&snap, Instant::now());
-    assert_eq!(t.len(), 1, "stale entries must not leak for the process lifetime");
+    assert_eq!(
+        t.len(),
+        1,
+        "stale entries must not leak for the process lifetime"
+    );
 }
 
 #[test]

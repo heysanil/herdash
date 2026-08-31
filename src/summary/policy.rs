@@ -34,8 +34,15 @@ pub struct SummaryState {
     pub from_revision: Option<u64>,
     /// When the current summary was produced.
     pub generated_at: Option<Instant>,
-    /// Status at the time of the last decision, for transition detection.
+    /// Status at the time of the last observation, for edge detection.
     pub last_status: Option<AgentStatus>,
+    /// An urgent transition was seen but no call could start yet.
+    ///
+    /// Edges are latched rather than consumed on sight: a `Working → Blocked`
+    /// that lands while a call is in flight, or during backoff, must still
+    /// force a summary once a worker is free. Without this the edge is lost
+    /// and a blocked agent silently keeps a stale summary.
+    pub pending_bypass: bool,
     /// Consecutive failures, driving [`backoff`].
     pub failures: u32,
     /// Earliest time a retry may be attempted.
@@ -54,6 +61,18 @@ pub fn backoff(failures: u32) -> Duration {
     Duration::from_secs(secs.min(BACKOFF_CAP))
 }
 
+/// Record the agent's current status, latching any urgent transition.
+///
+/// Must be called once per observation, *before* [`decide`]. Keeping the edge
+/// in `pending_bypass` rather than acting on it immediately is what makes a
+/// transition survive an in-flight call or an active backoff.
+pub fn observe_status(st: &mut SummaryState, new: AgentStatus) {
+    if is_bypass(new, st.last_status) {
+        st.pending_bypass = true;
+    }
+    st.last_status = Some(new);
+}
+
 /// Decide whether to summarise `agent` right now.
 ///
 /// Order matters: `in_flight` outranks even a forced refresh (we would only
@@ -68,10 +87,14 @@ pub fn decide(agent: &Agent, st: &SummaryState, now: Instant, cfg: &Cfg) -> Deci
     if st.forced {
         return Decision::Summarize;
     }
-    if let Some(retry_after) = st.retry_after
-        && now < retry_after
-    {
-        return Decision::Skip;
+    // A previous attempt failed. Retry purely on the backoff schedule — the
+    // revision and cooldown gates below would otherwise strand a failed
+    // summary forever, since a failure records the revision it attempted.
+    if st.failures > 0 {
+        return match st.retry_after {
+            Some(at) if now < at => Decision::Skip,
+            _ => Decision::Summarize,
+        };
     }
     // Never summarised: a newly appeared agent always gets one immediately.
     let Some(from_revision) = st.from_revision else {
@@ -81,7 +104,7 @@ pub fn decide(agent: &Agent, st: &SummaryState, now: Instant, cfg: &Cfg) -> Deci
     if agent.revision == from_revision {
         return Decision::Skip;
     }
-    if is_bypass(agent.status, st.last_status) {
+    if st.pending_bypass {
         return Decision::Summarize;
     }
     match st.generated_at {
