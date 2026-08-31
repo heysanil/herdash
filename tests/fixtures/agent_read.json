@@ -1,0 +1,16 @@
+{
+  "id": "fixture",
+  "result": {
+    "type": "agent_read",
+    "read": {
+      "format": "text",
+      "pane_id": "w1:p1",
+      "revision": 10,
+      "source": "recent_unwrapped",
+      "tab_id": "w1:t1",
+      "workspace_id": "w1",
+      "truncated": false,
+      "text": "> fix the rounding bug\n* Read billing.py\n* 41 passed, 2 failed\n* Now editing proration()\n"
+    }
+  }
+}

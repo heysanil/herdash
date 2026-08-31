@@ -429,6 +429,6 @@ run = "cargo fmt --all"
 ```
 
 Dependencies: `ratatui` 0.30, `crossterm` 0.29 (`event-stream`), `tokio` 1.53
-(`rt-multi-thread`, `net`, `sync`, `time`, `macros`), `reqwest` 0.13 (`json`,
-`rustls-tls`), `serde` 1 (`derive`), `serde_json` 1, `anyhow`, `clap` 4
+(`rt-multi-thread`, `net`, `sync`, `time`, `macros`), `reqwest` 0.13 (`json`, `rustls`,
+`rustls-native-certs`), `serde` 1 (`derive`), `serde_json` 1, `anyhow`, `clap` 4
 (`derive`).

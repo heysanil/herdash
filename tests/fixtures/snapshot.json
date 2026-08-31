@@ -1,0 +1,29 @@
+{
+  "id": "fixture",
+  "result": {
+    "snapshot": {
+      "protocol": 20,
+      "version": 1,
+      "focused_workspace_id": "w1",
+      "focused_tab_id": "w1:t1",
+      "focused_pane_id": "w1:p1",
+      "agents": [
+        {"agent":"claude","agent_status":"working","workspace_id":"w1","tab_id":"w1:t1","pane_id":"w1:p1","terminal_id":"t_a","terminal_title":"◑ alpha feature","terminal_title_stripped":"alpha feature","cwd":"/repos/alpha","foreground_cwd":"/repos/alpha","focused":true,"revision":10,"state_change_seq":100},
+        {"agent":"claude","agent_status":"idle","workspace_id":"w2","tab_id":"w2:t1","pane_id":"w2:p1","terminal_id":"t_b","terminal_title":"✳ alpha docs","terminal_title_stripped":"alpha docs","cwd":"/repos/alpha-docs","foreground_cwd":"/repos/alpha-docs","focused":false,"revision":20,"state_change_seq":200},
+        {"agent":"codex","agent_status":"blocked","workspace_id":"w3","tab_id":"w3:t1","pane_id":"w3:p1","terminal_id":"t_c","terminal_title":"beta migration","terminal_title_stripped":"beta migration","cwd":"/repos/beta","foreground_cwd":"/repos/beta","focused":false,"revision":30,"state_change_seq":300},
+        {"agent":"claude","agent_status":"done","workspace_id":"w4","tab_id":"w4:t1","pane_id":"w4:p1","terminal_id":"t_d","terminal_title":"loose end","terminal_title_stripped":"loose end","cwd":"/tmp/scratch","foreground_cwd":"/tmp/scratch","focused":false,"revision":40,"state_change_seq":400},
+        {"agent":"gemini","agent_status":"levitating","workspace_id":"w5","tab_id":"w5:t1","pane_id":"w5:p1","terminal_id":"t_e","terminal_title":"mystery","terminal_title_stripped":"mystery","cwd":"/repos/beta","foreground_cwd":"/repos/beta","focused":false,"revision":50,"state_change_seq":500}
+      ],
+      "workspaces": [
+        {"workspace_id":"w1","label":"feat-alpha","number":1,"focused":true,"agent_status":"working","tab_count":1,"pane_count":1,"worktree":{"checkout_path":"/repos/alpha","is_linked_worktree":true,"repo_key":"/repos/alpha/.git","repo_name":"alpha","repo_root":"/repos/alpha"}},
+        {"workspace_id":"w2","label":"feat-alpha-docs","number":2,"focused":false,"agent_status":"idle","tab_count":1,"pane_count":1,"worktree":{"checkout_path":"/repos/alpha-docs","is_linked_worktree":true,"repo_key":"/repos/alpha/.git","repo_name":"alpha","repo_root":"/repos/alpha"}},
+        {"workspace_id":"w3","label":"feat-beta","number":3,"focused":false,"agent_status":"blocked","tab_count":1,"pane_count":1,"worktree":{"checkout_path":"/repos/beta","is_linked_worktree":false,"repo_key":"/repos/beta/.git","repo_name":"beta","repo_root":"/repos/beta"}},
+        {"workspace_id":"w4","label":"scratch","number":4,"focused":false,"agent_status":"done","tab_count":1,"pane_count":1},
+        {"workspace_id":"w5","label":"mystery","number":5,"focused":false,"agent_status":"unknown","tab_count":1,"pane_count":1,"worktree":{"checkout_path":"/repos/beta","is_linked_worktree":false,"repo_key":"/repos/beta/.git","repo_name":"beta","repo_root":"/repos/beta"}}
+      ],
+      "tabs": [],
+      "panes": [],
+      "layouts": []
+    }
+  }
+}

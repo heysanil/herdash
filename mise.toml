@@ -1,0 +1,26 @@
+[tools]
+rust = "1.98"
+
+[tasks.run]
+description = "Run herdash"
+run = "cargo run"
+
+[tasks.test]
+description = "Run all tests"
+run = "cargo test --all-targets"
+
+[tasks.lint]
+description = "Clippy with warnings denied"
+run = "cargo clippy --all-targets -- -D warnings"
+
+[tasks.fmt]
+description = "Format all code"
+run = "cargo fmt --all"
+
+[tasks.check]
+description = "fmt check + lint + test"
+run = [
+  "cargo fmt --all -- --check",
+  "cargo clippy --all-targets -- -D warnings",
+  "cargo test --all-targets",
+]
