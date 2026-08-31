@@ -157,7 +157,9 @@ fn read_result_extracts_nested_text() {
     let v: serde_json::Value = serde_json::from_str(READ_FIXTURE).unwrap();
     let env: ReadEnvelope = serde_json::from_value(v["result"].clone()).unwrap();
     assert!(env.read.text.contains("Now editing proration()"));
-    assert_eq!(env.read.revision, 10);
+    // herdr always reports 0 for a read's revision — the field exists but
+    // carries no information. Change detection uses the snapshot revision.
+    assert_eq!(env.read.revision, 0);
 }
 
 /// herdr's schema declares `agent`, `cwd` and `terminal_title_stripped` as

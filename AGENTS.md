@@ -45,6 +45,11 @@ These cost real debugging time. Do not rediscover them.
   55-row pane: `lines = 60` fails, `lines = 40` succeeds, and `visible` always
   works. `Client::read_agent` falls back to `visible` for exactly this reason —
   without it, the agents you most want summarised never get a summary.
+- **`agent.read` always reports `revision: 0`.** The field exists on the read
+  payload but carries no information, so it is useless as a change signal.
+  Change detection uses the *snapshot* revision, captured when the job is
+  dispatched. Recording the read's value would make every agent look
+  permanently changed and defeat the "only summarise when output moved" rule.
 - **`source` uses underscores on the wire**: `visible | recent |
   recent_unwrapped | detection`. The CLI's hyphenated `recent-unwrapped` is
   rejected.

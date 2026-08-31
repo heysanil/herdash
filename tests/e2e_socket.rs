@@ -123,10 +123,9 @@ async fn agent_read_sends_the_underscored_source_and_returns_the_nested_text() {
     let client = Client::new(&path);
     let read = client.read_agent("w1:p1", 200).await.unwrap();
     assert!(read.text.contains("Now editing proration()"));
-    assert_eq!(
-        read.revision, 10,
-        "the read reports the revision it was taken at"
-    );
+    // herdr always reports 0 here. The field exists but carries no
+    // information, which is why change detection uses the snapshot revision.
+    assert_eq!(read.revision, 0);
 
     let sent: serde_json::Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
     assert_eq!(sent["method"], "agent.read");

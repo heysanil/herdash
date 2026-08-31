@@ -169,26 +169,24 @@ async fn summarize_agent(
     lines: u32,
     tx: mpsc::Sender<Update>,
 ) {
-    let (revision, result) = match client.read_agent(&job.pane_id, lines).await {
-        Ok(read) if read.text.trim().is_empty() => (
-            read.revision,
-            Err("pane produced no output to summarise".to_string()),
-        ),
-        // Record the revision the transcript was actually read at, not the one
-        // the snapshot reported — the pane may have moved on in between.
-        Ok(read) => {
-            let result = summarizer
-                .summarize_agent(&read.text)
-                .await
-                .map_err(|e| e.to_string());
-            (read.revision, result)
+    // herdr always reports `revision: 0` on a read, so the snapshot revision
+    // captured at dispatch is the only usable change signal. Recording the
+    // read's value instead would make every agent look permanently changed and
+    // defeat the "only summarise when output actually moved" rule entirely.
+    let result = match client.read_agent(&job.pane_id, lines).await {
+        Ok(read) if read.text.trim().is_empty() => {
+            Err("pane produced no output to summarise".to_string())
         }
-        Err(err) => (job.revision, Err(err.to_string())),
+        Ok(read) => summarizer
+            .summarize_agent(&read.text)
+            .await
+            .map_err(|e| e.to_string()),
+        Err(err) => Err(err.to_string()),
     };
     let _ = tx
         .send(Update::Summary {
             pane_id: job.pane_id,
-            revision,
+            revision: job.revision,
             result,
         })
         .await;

@@ -484,7 +484,13 @@ because each one is a trap for the next reader.
    every actively working agent.
 3. **Nullable strings.** Six fields the design treated as always-present are
    `["string", "null"]`.
-4. **Fixture fidelity.** The hand-built fixture used a numeric `version`,
+4. **`agent.read`'s revision is always 0.** A reviewer reasonably suggested
+   recording the revision the transcript was actually read at, rather than the
+   one the snapshot reported. herdr does not populate it. Taking that advice
+   would have silently disabled change detection: every agent would look
+   permanently changed and re-summarise on every cooldown. The snapshot
+   revision is the only usable signal.
+5. **Fixture fidelity.** The hand-built fixture used a numeric `version`,
    omitted `active_tab_id`, and named the read discriminator `agent_read`
    instead of `pane_read` — a shape herdr could not produce. Tests passed
    anyway because the structs ignore those fields, which is exactly how a
