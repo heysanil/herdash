@@ -154,7 +154,7 @@ fn force_all_covers_agents_the_filter_hides() {
     assert!(a.slots.values().all(|s| s.state.forced));
 }
 
-// ------------------------------------------------------- failure behaviour --
+// ------------------------------------------------------- failure behavior --
 
 #[test]
 fn a_failed_summary_records_backoff_and_keeps_the_previous_text_visible() {
@@ -337,7 +337,7 @@ fn a_failed_fleet_summary_is_retried_once_the_cooldown_elapses() {
 }
 
 #[test]
-fn an_unchanged_fleet_is_not_re_summarised_after_success() {
+fn an_unchanged_fleet_is_not_re_summarized_after_success() {
     let mut a = app_with_two_summaries();
     let mut job = FleetJob::default();
     let req = plan_fleet(&mut a, &mut job, base(), FLEET_COOLDOWN).unwrap();
@@ -360,7 +360,7 @@ fn an_unchanged_fleet_is_not_re_summarised_after_success() {
 }
 
 #[test]
-fn a_changed_fleet_is_re_summarised_after_the_cooldown() {
+fn a_changed_fleet_is_re_summarized_after_the_cooldown() {
     let mut a = app_with_two_summaries();
     let mut job = FleetJob::default();
     let req = plan_fleet(&mut a, &mut job, base(), FLEET_COOLDOWN).unwrap();
@@ -421,9 +421,9 @@ fn a_changed_fleet_still_respects_the_cooldown() {
 // ------------------------------------------------------ latched transitions --
 
 /// The whole point of latching: an agent that becomes blocked while its own
-/// summary call is running must still be re-summarised afterwards.
+/// summary call is running must still be re-summarized afterwards.
 #[test]
-fn an_agent_that_blocks_during_its_own_call_is_resummarised_afterwards() {
+fn an_agent_that_blocks_during_its_own_call_is_resummarized_afterwards() {
     let mut a = app();
     let mut fleet = FleetJob::default();
     let now = base();
@@ -495,17 +495,17 @@ fn orchestrator_module_is_reachable() {
     let _ = orchestrator::FLEET_COOLDOWN;
 }
 
-/// MAJOR: a display filter must never scope summarisation. Hiding idle agents
+/// MAJOR: a display filter must never scope summarization. Hiding idle agents
 /// is a viewing preference, not an instruction to stop describing them.
 #[test]
-fn a_display_filter_does_not_stop_summarisation() {
+fn a_display_filter_does_not_stop_summarization() {
     let mut a = app();
     a.active_only = true;
     a.apply_snapshot(&fixture());
     assert_eq!(a.agents().len(), 3, "two agents are hidden");
 
     let jobs = plan_summaries(&mut a, base(), &cfg(), 16);
-    assert_eq!(jobs.len(), 5, "all five are still summarised");
+    assert_eq!(jobs.len(), 5, "all five are still summarized");
 }
 
 /// And `R` must actually dispatch the agents it marked.

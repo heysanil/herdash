@@ -138,7 +138,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             lines.push(Line::from(Span::styled(l, theme::dim())));
         }
     } else if slot.map(|s| s.state.in_flight).unwrap_or(false) {
-        lines.push(Line::from(Span::styled("Summarising…", theme::dim())));
+        lines.push(Line::from(Span::styled("Summarizing…", theme::dim())));
     } else if slot.and_then(|s| s.error.as_ref()).is_none() {
         for l in wrap_to(
             "No summary yet — one is generated as soon as this agent produces output.",

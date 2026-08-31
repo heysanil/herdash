@@ -1,4 +1,4 @@
-//! Model benchmark for herdash summarisation.
+//! Model benchmark for herdash summarization.
 //!
 //! Deliberately reuses [`agent_request_body`] — the exact request the
 //! dashboard sends — so the benchmark measures the shipped prompt and schema

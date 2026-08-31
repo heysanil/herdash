@@ -33,7 +33,7 @@ it is doing now, and what it recently finished.
 │ ○ herdash                 w3S  2m  │ · Applied the comment-only correction      │
 │   Designing a ratatui dashboard.   │ · Dispatched verify-f8 subagent            │
 └────────────────────────────────────┴────────────────────────────────────────────┘
- ↑↓ select  ⏎ focus pane  r resummarise  R all  a active-only  ? keys  q quit
+ ↑↓ select  ⏎ focus pane  r resummarize  R all  a active-only  ? keys  q quit
 ```
 
 ## Requirements
@@ -59,7 +59,7 @@ Then run `herdash` in any herdr pane.
 ```bash
 herdash                      # full dashboard with summaries
 herdash --no-summaries       # status board only, zero external network egress
-herdash --cooldown 90        # summarise a given agent at most every 90s
+herdash --cooldown 90        # summarize a given agent at most every 90s
 ```
 
 | Flag | Default | Purpose |
@@ -71,6 +71,7 @@ herdash --cooldown 90        # summarise a given agent at most every 90s
 | `--no-summaries` | off | Pure status board, no external network egress |
 | `--socket <path>` | `$HERDR_SOCKET_PATH`, else `~/.config/herdr/herdr.sock` | herdr socket |
 | `--no-mouse` | off | Disable mouse capture, restoring your terminal's own text selection |
+| `--theme <auto\|ansi>` | `auto` | `auto` picks up `[theme.custom]` tokens from herdr's config; `ansi` uses terminal colors only |
 
 ### Keys
 
@@ -79,7 +80,7 @@ herdash --cooldown 90        # summarise a given agent at most every 90s
 | `↑` `↓` / `k` `j` | Select an agent |
 | `g` / `G` | First / last agent |
 | `⏎` | Focus that pane in herdr |
-| `r` / `R` | Resummarise the selected agent / every agent |
+| `r` / `R` | Resummarize the selected agent / every agent |
 | `a` | Toggle active-only (hide `idle` and `unknown`) |
 | `→` / `←` | Open / close detail on narrow terminals |
 | `?` | Keybinding help |
@@ -88,6 +89,35 @@ herdash --cooldown 90        # summarise a given agent at most every 90s
 Mouse works too: click a row to select it, click the selected row to focus that
 pane in herdr, and scroll to move the selection. `--no-mouse` turns capture off
 if you would rather keep your terminal's own text selection.
+
+### Colors
+
+herdash draws with **ANSI-named colors and no background**, so it adopts your
+terminal's palette rather than imposing one. On a rose-pine or gruvbox terminal
+it comes out rose-pine or gruvbox, with no configuration.
+
+It cannot read herdr's own theme directly. herdr's `[theme]` styles herdr's
+chrome — sidebar, borders, status bar — not the contents of a pane, and it
+publishes no palette over its socket API (all 91 methods carry no color
+surface). The built-in palettes are computed in herdr's code rather than stored
+as literals, so they cannot be extracted either.
+
+What *does* bridge the two is herdr's own override mechanism. Anything you set
+under `[theme.custom]` in `~/.config/herdr/config.toml` themes herdr **and**
+herdash identically:
+
+```toml
+[theme.custom]
+accent = "#f5c2e7"        # section headings
+red = "#ff6188"           # blocked agents, "waiting on you"
+green = "#a6e3a1"         # finished work
+yellow = "#f6c177"        # active work
+selection_bg = "#313244"  # the selected row
+```
+
+Hex, `rgb(r, g, b)` and named colors all work, matching herdr's own syntax.
+Anything you leave out keeps the terminal default. `--theme ansi` ignores the
+config entirely.
 
 ### Waiting on you
 
@@ -107,18 +137,18 @@ to do:
 ```
 
 Agents are *lifted* into this section rather than duplicated, so `j`/`k` never
-lands on the same agent twice. Until an agent has been summarised there is
+lands on the same agent twice. Until an agent has been summarized there is
 nothing to classify, so herdr's `blocked` stands in as the best signal
 available.
 
 ### Status glyphs
 
-Glyph, colour and sort order all encode one idea — how much does this want
+Glyph, color and sort order all encode one idea — how much does this want
 your attention?
 
 | | Status | Meaning |
 | --- | --- | --- |
-| `⊘` | `blocked` | herdr recognised an approval or question dialog. It needs you now. |
+| `⊘` | `blocked` | herdr recognized an approval or question dialog. It needs you now. |
 | `◆` | `done` | Finished work you have not seen yet. |
 | `●` | `working` | Busy. |
 | `○` | `idle` | Ready for input, and you have seen it. |
@@ -153,7 +183,7 @@ attention accuracy and plainer writing.
 
 ## Privacy
 
-**Summarisation sends your agents' terminal transcripts — which contain your
+**Summarization sends your agents' terminal transcripts — which contain your
 source code and file contents — to OpenRouter, and on to whichever provider it
 routes to.**
 
@@ -185,6 +215,6 @@ mise run check   # fmt --check + clippy -D warnings + all tests
 
 Every test runs without a herdr server and without network access.
 
-## Licence
+## License
 
 MIT. See [LICENSE](LICENSE).

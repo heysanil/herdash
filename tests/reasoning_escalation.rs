@@ -15,7 +15,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 
 /// Minimal HTTP server that records each request's `reasoning` field and
-/// replies according to `behaviour`.
+/// replies according to `behavior`.
 async fn stub(
     listener: TcpListener,
     seen: Arc<std::sync::Mutex<Vec<String>>>,

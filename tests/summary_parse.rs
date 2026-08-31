@@ -1,4 +1,4 @@
-//! Structured-output parsing, sanitisation and transcript clamping.
+//! Structured-output parsing, sanitization and transcript clamping.
 
 use herdash::summary::AgentSummary;
 use herdash::summary::openrouter::{

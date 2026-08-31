@@ -7,6 +7,15 @@ use clap::Parser;
 
 use crate::app::SummariesMode;
 
+/// Where herdash takes its colors from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum ThemeSource {
+    /// Terminal palette, overlaid with any `[theme.custom]` herdr tokens.
+    Auto,
+    /// Terminal palette only.
+    Ansi,
+}
+
 /// Terminal dashboard for herdr agent fleets.
 #[derive(Debug, Clone, Parser)]
 #[command(name = "herdash", version, about)]
@@ -42,6 +51,11 @@ pub struct Cli {
     /// Disable mouse capture, restoring your terminal's own text selection.
     #[arg(long)]
     pub no_mouse: bool,
+
+    /// Color source. `auto` picks up `[theme.custom]` tokens from herdr's
+    /// config; `ansi` uses terminal-palette colors only.
+    #[arg(long, value_enum, default_value_t = ThemeSource::Auto)]
+    pub theme: ThemeSource,
 }
 
 /// The user's home directory, falling back to `.` if it cannot be determined.
@@ -101,6 +115,7 @@ pub struct Settings {
     pub cooldown: Duration,
     pub lines: u32,
     pub mouse: bool,
+    pub palette: crate::ui::palette::Palette,
 }
 
 impl Settings {
@@ -129,6 +144,12 @@ impl Settings {
             cooldown: Duration::from_secs(cli.cooldown),
             lines: cli.lines,
             mouse: !cli.no_mouse,
+            palette: match cli.theme {
+                ThemeSource::Ansi => crate::ui::palette::Palette::default(),
+                ThemeSource::Auto => crate::ui::palette::Palette::from_herdr_config(
+                    &crate::ui::palette::Palette::herdr_config_path(&home),
+                ),
+            },
         }
     }
 

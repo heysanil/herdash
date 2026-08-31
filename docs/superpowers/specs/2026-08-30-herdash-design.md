@@ -67,7 +67,7 @@ terminal's alternate screen, which has no scrollback, so herdr returns
 `recent_unwrapped` with `lines = 60` fails, `lines = 40` succeeds, and
 `visible` always works. The client therefore tries `recent_unwrapped` first and
 falls back to `visible`. Without the fallback, actively working agents — the
-ones most worth summarising — are the only ones that never get a summary.
+ones most worth summarizing — are the only ones that never get a summary.
 
 Reads do not mark an agent's tab as seen, so the dashboard is observationally
 inert: polling never flips a `done` agent back to `idle`.
@@ -90,11 +90,11 @@ deserialisation error — and one bad field would blank the whole dashboard. A
 
 - `idle` — ready for input, and its tab has been seen in the focused UI.
 - `done` — the same underlying idle state, but the work finished unseen.
-- `blocked` — herdr recognised an approval or question dialog.
+- `blocked` — herdr recognized an approval or question dialog.
 - `unknown` — an agent is present but unclassified. Does *not* imply completion.
 
 `revision` increments as pane content changes and is the change-detection
-signal for summarisation. `state_change_seq` increments on lifecycle changes.
+signal for summarization. `state_change_seq` increments on lifecycle changes.
 
 ### 3.4 Workspace shape
 
@@ -104,7 +104,7 @@ signal for summarisation. `state_change_seq` increments on lifecycle changes.
 `is_linked_worktree`. Workspaces without a git checkout omit `worktree`
 entirely — the grouping code must handle this.
 
-### 3.5 Summarisation backend
+### 3.5 Summarization backend
 
 OpenRouter, model `meta-llama/llama-4-scout:nitro`. Verified live:
 
@@ -140,7 +140,7 @@ summary workers ───▶│         orchestrator::{plan_*, apply_update}    
 
 Because every herdr call opens its own connection, there is no shared socket
 and therefore no connection-owning task and no command channel: the poller and
-each summariser call `Client` directly and concurrently.
+each summarizer call `Client` directly and concurrently.
 
 The coordination logic — latched bypasses, forced refreshes racing in-flight
 calls, failure backoff, fleet throttling — lives in `orchestrator`, in the
@@ -180,7 +180,7 @@ src/
     sidebar.rs         repo groups, agent rows, one-line headlines
     detail.rs          selected agent: identity, TASK, NOW, RECENT
     footer.rs          keybinding hints
-    theme.rs           colours, glyphs
+    theme.rs           colors, glyphs
 tests/
   fixtures/            recorded snapshot.json, agent_read.json
   policy.rs            decision-table tests
@@ -234,7 +234,7 @@ lower bound, so it renders with a `~` prefix (`~1h`). The prefix is dropped the
 first time that agent's `state_change_seq` changes under observation, because
 from then on the age is exact.
 
-## 7. Refresh and summarisation policy
+## 7. Refresh and summarization policy
 
 Two independent clocks.
 
@@ -271,7 +271,7 @@ Bypasses, which exist because these are the moments that matter:
 | `r` keypress on selection | explicit user request |
 | `R` keypress | explicit refresh of all |
 
-A newly appeared agent always summarises once, immediately.
+A newly appeared agent always summarizes once, immediately.
 
 Failures back off exponentially per agent: 5s, 15s, 45s, capped at 5 min. The
 backoff is part of `SummaryState` and therefore part of the pure decision.
@@ -339,13 +339,13 @@ Sidebar is a fixed 38 columns; the detail pane takes the remainder.
 
 Both encode one idea: *how much does this want my attention?*
 
-| Status | Glyph | Colour | Order |
+| Status | Glyph | Color | Order |
 | --- | --- | --- | --- |
 | `blocked` | `⊘` | red | 1 |
 | `done` | `◆` | green | 2 |
 | `working` | `●` | amber | 3 |
 | `idle` | `○` | dim | 4 |
-| `unknown` | `?` | dark grey | 5 |
+| `unknown` | `?` | dark gray | 5 |
 
 Agents sort by this priority, then longest-in-state first, then by label.
 
@@ -359,7 +359,7 @@ agent that needs you would defeat the dashboard's purpose.
 
 Two lines per agent: glyph + label (truncated with `…`) + workspace id + age;
 then the dim wrapped `headline`. While a summary is generating, the second line
-shows an animated `summarising…`. With summaries disabled the second line is
+shows an animated `summarizing…`. With summaries disabled the second line is
 the `terminal_title_stripped`, which keeps the sidebar useful.
 
 ### 8.4 Detail pane
@@ -376,7 +376,7 @@ with `$HOME` abbreviated to `~` and middle-elided if long. Then `TASK`, `NOW`,
 | `↑`/`↓`, `k`/`j` | move selection (skips group headers) |
 | `g`/`G` | first / last |
 | `⏎` | `agent.focus` on the selected pane |
-| `r` / `R` | resummarise selected / all |
+| `r` / `R` | resummarize selected / all |
 | `a` | toggle active-only (hide `idle` and `unknown`) |
 | `?` | keybinding overlay |
 | `q`, `Ctrl-C` | quit |
@@ -384,7 +384,7 @@ with `$HOME` abbreviated to `~` and middle-elided if long. Then `TASK`, `NOW`,
 Selection is keyed on `pane_id`, so it survives re-sorting and list churn. If
 the selected agent disappears, selection moves to the nearest surviving row.
 
-### 8.6 Responsive behaviour
+### 8.6 Responsive behavior
 
 Below 100 columns the detail pane is hidden and the sidebar takes the full
 width; `→`/`l` opens detail as a full-screen view, `←`/`h` or `Esc` returns.
@@ -403,7 +403,7 @@ Below 20 rows the fleet summary block collapses to a single line.
 
 ## 10. Failure modes
 
-| Failure | Behaviour |
+| Failure | Behavior |
 | --- | --- |
 | Socket missing or server down | Message naming the attempted path and suggesting `herdr server`, exit 1 |
 | Socket drops while running | Header shows `⟳ reconnecting`, last known state stays rendered, reconnect with backoff to 10s |
@@ -418,7 +418,7 @@ broken tty.
 
 ### 10.1 Privacy
 
-Summarisation transmits agent terminal transcripts — which contain source code
+Summarization transmits agent terminal transcripts — which contain source code
 and file contents — to OpenRouter and its routed provider. This must be stated
 in the README. `--no-summaries` and the missing-key path both provide the
 dashboard with zero external network egress.
@@ -488,7 +488,7 @@ because each one is a trap for the next reader.
    recording the revision the transcript was actually read at, rather than the
    one the snapshot reported. herdr does not populate it. Taking that advice
    would have silently disabled change detection: every agent would look
-   permanently changed and re-summarise on every cooldown. The snapshot
+   permanently changed and re-summarize on every cooldown. The snapshot
    revision is the only usable signal.
 5. **Fixture fidelity.** The hand-built fixture used a numeric `version`,
    omitted `active_tab_id`, and named the read discriminator `agent_read`
@@ -497,4 +497,4 @@ because each one is a trap for the next reader.
    fixture stops guarding anything.
 
 The general lesson is recorded in `AGENTS.md`: the schema describes shapes, not
-behaviour. Protocol behaviour must be verified against a running server.
+behavior. Protocol behavior must be verified against a running server.

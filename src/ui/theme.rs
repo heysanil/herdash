@@ -1,9 +1,12 @@
-//! Colours, glyphs and layout constants.
+//! Glyphs, layout constants, and styles built from the active palette.
 //!
-//! Glyph and colour both encode one idea: how much does this want attention.
+//! Glyph and color both encode one idea: how much does this want attention.
+//! Colors come from [`super::palette`], which inherits the terminal and any
+//! `[theme.custom]` tokens set in herdr's config.
 
 use ratatui::style::{Color, Modifier, Style};
 
+use super::palette::active;
 use crate::herdr::types::AgentStatus;
 
 /// Fixed sidebar width; the detail pane takes the remainder.
@@ -24,12 +27,15 @@ pub fn glyph(status: AgentStatus) -> &'static str {
 }
 
 pub fn status_color(status: AgentStatus) -> Color {
+    let p = active();
     match status {
-        AgentStatus::Blocked => Color::Red,
-        AgentStatus::Done => Color::Green,
-        AgentStatus::Working => Color::Yellow,
-        AgentStatus::Idle => Color::Gray,
-        AgentStatus::Unknown => Color::DarkGray,
+        AgentStatus::Blocked => p.alert,
+        AgentStatus::Done => p.ok,
+        AgentStatus::Working => p.busy,
+        // Idle text is ordinary text, so it follows the terminal foreground
+        // rather than being forced to a color of our choosing.
+        AgentStatus::Idle => p.text,
+        AgentStatus::Unknown => p.muted,
     }
 }
 
@@ -38,23 +44,33 @@ pub fn status_style(status: AgentStatus) -> Style {
 }
 
 pub fn dim() -> Style {
-    Style::default().fg(Color::DarkGray)
+    Style::default().fg(active().muted)
 }
 
 pub fn heading() -> Style {
     Style::default()
-        .fg(Color::Cyan)
+        .fg(active().accent)
         .add_modifier(Modifier::BOLD)
 }
 
 pub fn selected() -> Style {
-    Style::default().add_modifier(Modifier::REVERSED)
+    // Reversed video by default, which works against any terminal palette.
+    // A theme that names a selection background gets that instead.
+    match active().selection {
+        Some(bg) => Style::default().bg(bg),
+        None => Style::default().add_modifier(Modifier::REVERSED),
+    }
 }
 
+/// Body text.
+///
+/// Defaults to [`Color::Reset`], i.e. the terminal's own foreground. Forcing
+/// white here was the single biggest reason herdash looked foreign next to
+/// herdr on a themed terminal.
 pub fn label() -> Style {
-    Style::default().fg(Color::White)
+    Style::default().fg(active().text)
 }
 
 pub fn alert() -> Style {
-    Style::default().fg(Color::Red)
+    Style::default().fg(active().alert)
 }

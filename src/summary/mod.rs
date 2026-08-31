@@ -1,4 +1,4 @@
-//! LLM summarisation of agent transcripts.
+//! LLM summarization of agent transcripts.
 
 pub mod openrouter;
 pub mod policy;
@@ -13,7 +13,7 @@ pub use types::{AgentSummary, or_dash};
 /// touch the network.
 #[async_trait]
 pub trait Summarizer: Send + Sync {
-    /// Summarise one agent's transcript.
+    /// Summarize one agent's transcript.
     async fn summarize_agent(&self, transcript: &str) -> Result<AgentSummary>;
     /// Fold per-agent headlines into a one-or-two sentence fleet overview.
     async fn summarize_fleet(&self, headlines: &[String]) -> Result<String>;

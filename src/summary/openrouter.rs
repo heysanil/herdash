@@ -79,7 +79,7 @@ pub fn clamp_transcript(text: &str, max_bytes: usize) -> &str {
 
 /// How much chain-of-thought to ask a provider for.
 ///
-/// Summarisation is extraction, not deduction, so reasoning buys nothing here
+/// Summarization is extraction, not deduction, so reasoning buys nothing here
 /// and costs a great deal. But no single setting works everywhere, measured
 /// across seven providers:
 ///
@@ -216,7 +216,7 @@ fn content_of(body: &str) -> Result<String> {
         .context("OpenRouter response had no message content")
 }
 
-/// Parse and sanitise an agent summary response.
+/// Parse and sanitize an agent summary response.
 pub fn parse_agent_response(body: &str) -> Result<AgentSummary> {
     let content = content_of(body)?;
     let summary: AgentSummary = serde_json::from_str(content.trim()).with_context(|| {

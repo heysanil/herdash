@@ -219,7 +219,7 @@ async fn connecting_to_a_missing_socket_fails_with_the_path_in_the_message() {
     );
 }
 
-/// Regression test for the constraint that broke summarisation of every
+/// Regression test for the constraint that broke summarization of every
 /// *working* agent: herdr refuses a read larger than the alternate-screen
 /// viewport, so the client must fall back to `visible` rather than give up.
 #[tokio::test]

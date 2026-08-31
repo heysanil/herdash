@@ -44,12 +44,12 @@ These cost real debugging time. Do not rediscover them.
   so herdr returns `agent_not_idle` rather than truncating. Measured on a
   55-row pane: `lines = 60` fails, `lines = 40` succeeds, and `visible` always
   works. `Client::read_agent` falls back to `visible` for exactly this reason —
-  without it, the agents you most want summarised never get a summary.
+  without it, the agents you most want summarized never get a summary.
 - **`agent.read` always reports `revision: 0`.** The field exists on the read
   payload but carries no information, so it is useless as a change signal.
   Change detection uses the *snapshot* revision, captured when the job is
   dispatched. Recording the read's value would make every agent look
-  permanently changed and defeat the "only summarise when output moved" rule.
+  permanently changed and defeat the "only summarize when output moved" rule.
 - **`source` uses underscores on the wire**: `visible | recent |
   recent_unwrapped | detection`. The CLI's hyphenated `recent-unwrapped` is
   rejected.
@@ -68,7 +68,7 @@ These cost real debugging time. Do not rediscover them.
 
 ## OpenRouter gotchas
 
-- **Reasoning must be negotiated, not assumed.** Summarisation is extraction,
+- **Reasoning must be negotiated, not assumed.** Summarization is extraction,
   so chain-of-thought buys nothing and costs a lot. But no single setting works
   everywhere: `reasoning: {enabled: false}` is cheapest and is the only thing
   that makes kimi-k2.6 and qwen3.5-35b return content at all (otherwise they
@@ -84,12 +84,19 @@ These cost real debugging time. Do not rediscover them.
 ## Design rules
 
 - **`src/summary/policy.rs` must stay pure.** No clocks, no I/O, no async; the
-  caller passes `now`. This is what makes the summarisation cadence testable.
+  caller passes `now`. This is what makes the summarization cadence testable.
 - **`src/orchestrator.rs` must stay synchronous and clock-injected.** It holds
   the trickiest state in the program — latched bypasses, forced refreshes
   racing in-flight calls, failure backoff, fleet throttling. It lives in the
   library rather than `main.rs` precisely so it can be tested. Do not move
   logic back into the binary.
+- **Colors come from `src/ui/palette.rs`, never hardcoded.** The defaults are
+  ANSI-*named* on purpose: `Color::Red` lets a themed terminal render its own
+  red, where `Color::Rgb(255, 0, 0)` would override the user's palette with a
+  color from nowhere. Body text is `Color::Reset` and no background is painted,
+  which is what makes herdash look native beside herdr. herdr publishes no
+  palette over its API and computes its built-in themes in code, so the only
+  exact bridge is its `[theme.custom]` tokens, which the palette reads.
 - **`src/ui/*` must stay pure.** Rendering is a projection of `App` state; no
   network, no mutation. The in-flight spinner animates off `App::tick`, which
   the event loop increments, rather than reading a clock during render.
@@ -101,7 +108,7 @@ These cost real debugging time. Do not rediscover them.
   (`→ blocked`, `working → done/idle`) that lands during an in-flight call or
   an active backoff must still force a summary afterwards.
 - **Never deny unknown JSON fields.** herdr adds fields between releases; an
-  unrecognised `agent_status` must degrade to `Unknown`, not error.
+  unrecognized `agent_status` must degrade to `Unknown`, not error.
 
 ## Testing
 

@@ -73,7 +73,7 @@ pub fn observe_status(st: &mut SummaryState, new: AgentStatus) {
     st.last_status = Some(new);
 }
 
-/// Decide whether to summarise `agent` right now.
+/// Decide whether to summarize `agent` right now.
 ///
 /// Order matters: `in_flight` outranks even a forced refresh (we would only
 /// duplicate work), and a forced refresh outranks backoff (the user asked).
@@ -96,7 +96,7 @@ pub fn decide(agent: &Agent, st: &SummaryState, now: Instant, cfg: &Cfg) -> Deci
             _ => Decision::Summarize,
         };
     }
-    // Never summarised: a newly appeared agent always gets one immediately.
+    // Never summarized: a newly appeared agent always gets one immediately.
     let Some(from_revision) = st.from_revision else {
         return Decision::Summarize;
     };
@@ -117,7 +117,7 @@ pub fn decide(agent: &Agent, st: &SummaryState, now: Instant, cfg: &Cfg) -> Deci
 /// Transitions urgent enough to ignore the cooldown.
 ///
 /// Fires on the *edge*, not the level — a long-blocked agent must not
-/// re-summarise on every tick.
+/// re-summarize on every tick.
 fn is_bypass(new: AgentStatus, old: Option<AgentStatus>) -> bool {
     let Some(old) = old else { return false };
     if new == old {

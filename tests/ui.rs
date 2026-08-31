@@ -171,7 +171,7 @@ fn a_summary_headline_replaces_the_terminal_title() {
 fn an_in_flight_summary_shows_progress() {
     let mut a = app();
     a.slots.entry("w3:p1".into()).or_default().state.in_flight = true;
-    assert!(render(&a, 120, 40).contains("summarising"));
+    assert!(render(&a, 120, 40).contains("summarizing"));
 }
 
 /// The indicator animates off the redraw tick, so rendering stays a pure
@@ -186,7 +186,7 @@ fn the_in_flight_indicator_animates_with_the_tick() {
             let text = render(&a, 120, 40);
             let line = text
                 .lines()
-                .find(|l| l.contains("summarising"))
+                .find(|l| l.contains("summarizing"))
                 .unwrap()
                 .to_string();
             line.trim_start().chars().next().unwrap()
@@ -428,7 +428,7 @@ fn the_help_overlay_documents_every_binding() {
     for hint in [
         "select an agent",
         "focus pane in herdr",
-        "resummarise",
+        "resummarize",
         "active-only",
         "quit",
     ] {

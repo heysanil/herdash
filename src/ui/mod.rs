@@ -4,6 +4,7 @@
 pub mod detail;
 pub mod footer;
 pub mod header;
+pub mod palette;
 pub mod sidebar;
 pub mod theme;
 
@@ -147,7 +148,7 @@ pub fn hit_test(app: &App, area: Rect, column: u16, row: u16) -> Option<Hit> {
 }
 
 /// Greedy word wrap into at most `max_lines` lines of `width` characters,
-/// ellipsising the final line when text remains. Words longer than `width`
+/// ellipsizing the final line when text remains. Words longer than `width`
 /// are hard-broken rather than overflowing.
 pub fn wrap_to(text: &str, width: usize, max_lines: usize) -> Vec<String> {
     if width == 0 || max_lines == 0 {
@@ -229,7 +230,7 @@ pub fn wrap_to(text: &str, width: usize, max_lines: usize) -> Vec<String> {
     lines
 }
 
-/// Replace the final line with an ellipsised version that fits `width`
+/// Replace the final line with an ellipsized version that fits `width`
 /// columns and always ends in `…`.
 ///
 /// Unlike [`truncate_to_width`], this appends the ellipsis unconditionally:

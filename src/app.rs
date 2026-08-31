@@ -146,7 +146,7 @@ impl App {
 
     /// Every agent in the last snapshot, unfiltered.
     ///
-    /// Summarisation must never be scoped by a display filter: hiding idle
+    /// Summarization must never be scoped by a display filter: hiding idle
     /// agents is a viewing preference, not an instruction to stop describing
     /// them, and `R` has to reach agents the filter is hiding.
     pub fn all_agents(&self) -> Vec<Agent> {

@@ -55,6 +55,10 @@ async fn main() -> Result<()> {
         )
     })?;
 
+    // Install colors before the first frame so nothing flashes in the wrong
+    // palette.
+    herdash::ui::palette::init(settings.palette);
+
     let terminal = ratatui::init();
     install_panic_hook();
     if settings.mouse
@@ -259,7 +263,7 @@ async fn summarize_agent(
     // herdr always reports `revision: 0` on a read, so the snapshot revision
     // captured at dispatch is the only usable change signal. Recording the
     // read's value instead would make every agent look permanently changed and
-    // defeat the "only summarise when output actually moved" rule entirely.
+    // defeat the "only summarize when output actually moved" rule entirely.
     let result = match client.read_agent(&job.pane_id, lines).await {
         // Nothing to describe is a normal state, not an error: reporting it as
         // a failure would re-read an empty pane on every backoff tick forever.

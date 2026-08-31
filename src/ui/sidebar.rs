@@ -264,7 +264,7 @@ fn secondary(app: &App, a: &Agent, width: usize) -> Vec<String> {
         }
         if slot.state.in_flight {
             let frame = SPINNER[(app.tick as usize) % SPINNER.len()];
-            return vec![format!("{frame} summarising…")];
+            return vec![format!("{frame} summarizing…")];
         }
         if let Some(s) = &slot.summary {
             return wrap_to(&s.headline, width, HEADLINE_LINES);

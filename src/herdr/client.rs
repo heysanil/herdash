@@ -268,7 +268,7 @@ impl Client {
     /// Verified against herdr 0.8.2 on a 55-row pane: `recent_unwrapped` with
     /// `lines = 60` fails, `lines = 40` succeeds, and `visible` always works.
     ///
-    /// Without this fallback the agents you most want summarised — the ones
+    /// Without this fallback the agents you most want summarized — the ones
     /// actively working — are the only ones that never get a summary.
     ///
     /// Returns the whole payload so the caller can record the revision the

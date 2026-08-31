@@ -36,7 +36,7 @@ pub enum AgentStatus {
 }
 
 impl AgentStatus {
-    /// Map a wire string to a status. Unrecognised values become
+    /// Map a wire string to a status. Unrecognized values become
     /// [`Self::Unknown`] rather than a deserialisation error, so new herdr
     /// states degrade safely instead of blanking the dashboard.
     pub fn from_wire(s: &str) -> Self {
@@ -96,7 +96,7 @@ pub struct AgentInfo {
     pub cwd: String,
     #[serde(default)]
     pub focused: bool,
-    /// Increments as pane content changes — the summarisation change signal.
+    /// Increments as pane content changes — the summarization change signal.
     #[serde(default)]
     pub revision: u64,
     /// Increments on lifecycle changes — the status-age reset signal.

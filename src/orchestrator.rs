@@ -1,4 +1,4 @@
-//! Coordination between herdr polling, summarisation and app state.
+//! Coordination between herdr polling, summarization and app state.
 //!
 //! This lives in the library rather than in `main.rs` on purpose: it holds the
 //! trickiest state transitions in the program — latched bypasses, forced
@@ -33,7 +33,7 @@ pub enum Update {
         pane_id: String,
         /// Snapshot revision this attempt was dispatched for.
         revision: u64,
-        /// `Ok(None)` means the pane had nothing worth summarising — a normal
+        /// `Ok(None)` means the pane had nothing worth summarizing — a normal
         /// outcome, not a failure, so it must not trigger error backoff.
         result: Result<Option<AgentSummary>, String>,
     },
@@ -58,7 +58,7 @@ pub struct FleetJob {
     pub last_success_hash: Option<u64>,
 }
 
-/// An agent that should be summarised now.
+/// An agent that should be summarized now.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SummaryJob {
     pub pane_id: String,
@@ -162,7 +162,7 @@ fn first_line(msg: &str) -> String {
 /// Iterates the unfiltered fleet: hiding idle agents is a viewing preference,
 /// not an instruction to stop describing them.
 pub fn plan_summaries(app: &mut App, now: Instant, cfg: &Cfg, capacity: usize) -> Vec<SummaryJob> {
-    // Unfiltered: a display filter must not silently stop summarisation.
+    // Unfiltered: a display filter must not silently stop summarization.
     let agents: Vec<Agent> = app.all_agents();
     let mut jobs = Vec::new();
     for agent in agents {

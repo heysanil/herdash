@@ -1,4 +1,4 @@
-//! The summarisation cadence decision table.
+//! The summarization cadence decision table.
 //!
 //! This is the highest-value suite in the project: `policy::decide` is pure,
 //! so every branch is reachable without a clock, a socket or HTTP.
@@ -40,7 +40,7 @@ fn agent(status: AgentStatus, revision: u64) -> Agent {
     }
 }
 
-/// A summarised state: revision 10 captured 60s ago, cooldown already elapsed.
+/// A summarized state: revision 10 captured 60s ago, cooldown already elapsed.
 fn settled(now: Instant, status: AgentStatus) -> SummaryState {
     SummaryState {
         in_flight: false,

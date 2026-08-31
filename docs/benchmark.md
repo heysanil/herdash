@@ -1,4 +1,4 @@
-# Summarisation model benchmark
+# Summarization model benchmark
 
 herdash sends one structured-output request per agent summary. This measures
 which model to send it to.

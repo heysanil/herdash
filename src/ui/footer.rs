@@ -8,7 +8,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use super::theme;
 use crate::app::App;
 
-const HINTS: &str = " ↑↓ select  ⏎ focus pane  r resummarise  R all  a active-only  ? keys  q quit";
+const HINTS: &str = " ↑↓ select  ⏎ focus pane  r resummarize  R all  a active-only  ? keys  q quit";
 
 /// Every binding, as (keys, description). Shared by the footer and the overlay
 /// so the two can never drift apart.
@@ -16,8 +16,8 @@ pub const BINDINGS: &[(&str, &str)] = &[
     ("↑ ↓ / k j", "select an agent"),
     ("g / G", "first / last agent"),
     ("⏎", "focus pane in herdr"),
-    ("r", "resummarise the selected agent"),
-    ("R", "resummarise every agent"),
+    ("r", "resummarize the selected agent"),
+    ("R", "resummarize every agent"),
     ("a", "toggle active-only (hide idle and unknown)"),
     ("→ / ←", "open / close detail on narrow terminals"),
     ("?", "toggle this help"),
