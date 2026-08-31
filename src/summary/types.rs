@@ -7,7 +7,7 @@ pub const HEADLINE_MAX: usize = 60;
 /// Maximum number of "recent work" bullets kept.
 pub const RECENT_MAX: usize = 6;
 /// Maximum rendered length of an attention reason.
-pub const ATTENTION_MAX: usize = 100;
+pub const ATTENTION_MAX: usize = 80;
 /// Rendered in place of an empty field.
 pub const DASH: &str = "—";
 

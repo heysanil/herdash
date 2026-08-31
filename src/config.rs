@@ -20,7 +20,11 @@ pub struct Cli {
     pub cooldown: u64,
 
     /// OpenRouter model slug used for summaries.
-    #[arg(long, default_value = "meta-llama/llama-4-scout:nitro")]
+    ///
+    /// The default was chosen by `examples/bench.rs`; see `docs/benchmark.md`.
+    /// It is the only model measured at 100% accuracy on the attention
+    /// classification while also scoring in the top tier for prose quality.
+    #[arg(long, default_value = "openai/gpt-oss-120b")]
     pub model: String,
 
     /// Transcript lines requested from each agent.

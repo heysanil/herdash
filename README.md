@@ -39,8 +39,9 @@ it is doing now, and what it recently finished.
 ## Requirements
 
 - A running herdr server (0.8.2 or later). Check with `herdr status server`.
-- [mise](https://mise.jdx.dev) — the pinned Rust 1.98 toolchain is required, as
-  ratatui 0.30 needs Rust ≥ 1.88 and edition 2024.
+- [mise](https://mise.jdx.dev). The crate needs Rust ≥ 1.88 and edition 2024
+  (ratatui 0.30's floor); `mise.toml` pins 1.98, which is what CI and the
+  contributor workflow assume.
 - An OpenRouter API key, **optional**: without one herdash runs as a pure
   status board. See [Privacy](#privacy).
 
@@ -65,10 +66,11 @@ herdash --cooldown 90        # summarise a given agent at most every 90s
 | --- | --- | --- |
 | `--interval <secs>` | `1` | Seconds between herdr snapshot polls |
 | `--cooldown <secs>` | `45` | Minimum seconds between summaries for one agent |
-| `--model <slug>` | `meta-llama/llama-4-scout:nitro` | OpenRouter model |
+| `--model <slug>` | `openai/gpt-oss-120b` | OpenRouter model — see [benchmark](docs/benchmark.md) |
 | `--lines <n>` | `200` | Transcript lines requested per agent |
 | `--no-summaries` | off | Pure status board, no external network egress |
 | `--socket <path>` | `$HERDR_SOCKET_PATH`, else `~/.config/herdr/herdr.sock` | herdr socket |
+| `--no-mouse` | off | Disable mouse capture, restoring your terminal's own text selection |
 
 ### Keys
 
@@ -82,6 +84,32 @@ herdash --cooldown 90        # summarise a given agent at most every 90s
 | `→` / `←` | Open / close detail on narrow terminals |
 | `?` | Keybinding help |
 | `q` / `Ctrl-C` | Quit |
+
+Mouse works too: click a row to select it, click the selected row to focus that
+pane in herdr, and scroll to move the selection. `--no-mouse` turns capture off
+if you would rather keep your terminal's own text selection.
+
+### Waiting on you
+
+The top section lists agents that are blocked on **you**, and it is driven by
+the model reading each transcript — not by herdr's lifecycle state. That
+distinction matters in both directions: an agent can be `working` while sitting
+on a question it already asked, and `idle` simply because it finished cleanly
+and wants nothing. Each row shows what is actually needed, phrased as the thing
+to do:
+
+```
+⚠ waiting on you ────────────────── 2
+⊘ scratch-investigate-auths  w3V  4m
+  → Decide whether to write the expiry-mismatch guard
+● feat-payment-funding       w3X  2m
+  → Approve the Figma authorization
+```
+
+Agents are *lifted* into this section rather than duplicated, so `j`/`k` never
+lands on the same agent twice. Until an agent has been summarised there is
+nothing to classify, so herdr's `blocked` stands in as the best signal
+available.
 
 ### Status glyphs
 
@@ -113,7 +141,15 @@ Two independent clocks keep the dashboard live without being expensive:
   blocked, or finishing) bypass the cooldown, because those are the moments
   you care about.
 
-At five agents under heavy activity this costs roughly a cent an hour.
+At five agents under heavy activity this costs a few cents an hour. Concurrent
+calls are capped so a large fleet cannot fire dozens of requests at once, and
+`R` reaches every agent including ones the `a` filter is hiding.
+
+Which model to point it at is measured rather than guessed — see
+[docs/benchmark.md](docs/benchmark.md) for seven models scored on cost,
+latency, prose quality and how reliably they spot an agent that actually needs
+you. `--model openai/gpt-oss-20b:nitro` is 4.6x cheaper with identical
+attention accuracy and plainer writing.
 
 ## Privacy
 
@@ -135,7 +171,7 @@ The API key is read from `$OPENROUTER_API_KEY`, then `~/.openrouter-key`.
 | `⟳ reconnecting` in the header | The socket is unreachable. The last known state stays on screen and polling retries automatically. |
 | `summaries off (no key)` | No key in `$OPENROUTER_API_KEY` or `~/.openrouter-key`. |
 | `summaries off` | You passed `--no-summaries`. |
-| `⚠ summary unavailable` on one agent | That agent's summary failed; the previous one stays visible. Retries follow a 5s → 15s → 45s → 5m backoff. `r` forces an immediate retry. |
+| `⚠ summary unavailable` on one agent | That agent's summary failed; the last successful one stays on screen beneath the error. Retries follow a 5s → 15s → 45s → 135s → 5m backoff. `r` forces an immediate retry. |
 | `herdr: …` notice in the header | herdr answered but not usefully — a protocol mismatch, say. Polling continues on the same schedule. |
 
 ## Development

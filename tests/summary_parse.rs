@@ -255,7 +255,7 @@ fn an_overlong_attention_reason_is_truncated() {
         .to_string(),
     );
     let s = parse_agent_response(&body).unwrap();
-    assert!(s.attention_reason.chars().count() <= 100);
+    assert!(s.attention_reason.chars().count() <= 80);
     assert!(s.needs_attention);
 }
 
@@ -265,4 +265,40 @@ fn a_response_without_attention_fields_defaults_to_no_attention() {
     let body = wrap(r#"{"headline":"h","task":"t","now":"n","recent":[]}"#);
     let s = parse_agent_response(&body).unwrap();
     assert!(!s.needs_attention);
+}
+
+#[test]
+fn reasoning_modes_escalate_in_cost_order() {
+    use herdash::summary::openrouter::ReasoningMode as M;
+    assert_eq!(M::Disabled.escalate(), Some(M::LowEffort));
+    assert_eq!(M::LowEffort.escalate(), Some(M::ProviderDefault));
+    assert_eq!(M::ProviderDefault.escalate(), None, "nothing left to try");
+}
+
+#[test]
+fn the_default_body_asks_for_no_reasoning() {
+    let b = agent_request_body("m", "t");
+    assert_eq!(b["reasoning"]["enabled"], false);
+}
+
+#[test]
+fn each_reasoning_mode_produces_the_right_field() {
+    use herdash::summary::openrouter::{ReasoningMode as M, agent_request_body_with};
+    assert_eq!(agent_request_body_with("m", "t", M::Disabled)["reasoning"]["enabled"], false);
+    assert_eq!(agent_request_body_with("m", "t", M::LowEffort)["reasoning"]["effort"], "low");
+    assert!(
+        agent_request_body_with("m", "t", M::ProviderDefault).get("reasoning").is_none(),
+        "the default sends no field at all"
+    );
+}
+
+/// Only a provider refusing the mode should trigger escalation — a rate limit
+/// or a schema error must surface as a real failure.
+#[test]
+fn only_reasoning_refusals_are_treated_as_escalation_signals() {
+    use herdash::summary::openrouter::is_reasoning_rejection;
+    assert!(is_reasoning_rejection("Reasoning is mandatory for this endpoint and cannot be disabled."));
+    assert!(is_reasoning_rejection("reasoning cannot be disabled for this model"));
+    assert!(!is_reasoning_rejection("rate limited"));
+    assert!(!is_reasoning_rejection("model did not return the requested schema"));
 }

@@ -32,16 +32,25 @@ an hour can pick the thread back up.\n\
 sentences. Be concrete: name the file, command, test or error it is on.\n\
 - `recent`: up to six recently completed steps, newest first, one short \
 clause each.\n\
-- `needs_attention`: true only if the agent cannot make progress without the \
-human. That means it asked a question, is waiting at an approval or \
-permission prompt, hit an error it cannot resolve alone, flagged an ambiguity \
-it needs decided, or finished its work and is waiting for what to do next. \
-It is false if the agent is simply busy, or thinking, or running a long \
-command. Judge this from the transcript itself, not from how idle the pane \
-looks.\n\
-- `attention_reason`: if `needs_attention` is true, one sentence of at most \
-100 characters saying exactly what is needed from the human, phrased as the \
-thing they must do or decide. Empty string otherwise.\n\
+- `needs_attention`: true ONLY if the agent is blocked on the human right now. \
+That means it asked the human a direct question, is sitting at an approval or \
+permission prompt, or hit an error it cannot resolve without a decision. \
+\
+It is FALSE in all of these cases, which look similar but are not: the agent \
+is busy, thinking, or running a long command; the agent finished its work \
+cleanly and the pane is merely idle; the agent proposed or suggested a next \
+step without asking anything; the agent said no action is needed; the human \
+has half-typed something into the prompt but not sent it. An idle pane is not \
+by itself a request — most idle agents want nothing. Only flag an agent whose \
+transcript contains an actual unanswered ask directed at the human.\n\
+- `attention_reason`: if `needs_attention` is true, at most 70 characters \
+addressed to the human as a direct instruction, starting with a verb. Say what \
+they must do or decide. Do not begin with \"The agent\", do not describe the \
+agent's state, and do not pad with words like \"needs\" or \"is waiting for\". \
+Good: \"Approve the Figma authorization\". \"Decide whether to write to the \
+seeded branch\". \"Answer its question about the summarize helper\". \
+Bad: \"The agent needs Figma authorization to proceed with the task\". \
+Empty string otherwise.\n\
 \
 Respond only with the JSON object.";
 
@@ -68,8 +77,75 @@ pub fn clamp_transcript(text: &str, max_bytes: usize) -> &str {
     }
 }
 
+/// How much chain-of-thought to ask a provider for.
+///
+/// Summarisation is extraction, not deduction, so reasoning buys nothing here
+/// and costs a great deal. But no single setting works everywhere, measured
+/// across seven providers:
+///
+/// - `Disabled` is cheapest and is the only thing that makes kimi-k2.6 and
+///   qwen3.5-35b work at all — without it they spend the entire token budget
+///   thinking and return `finish_reason: "length"` with empty content, a call
+///   you still pay for.
+/// - The OpenAI and Gemini endpoints *reject* `Disabled` outright with
+///   "Reasoning is mandatory for this endpoint", but accept `LowEffort`.
+/// - `ProviderDefault` sends no field at all, for anything that rejects both.
+///
+/// So the client starts at `Disabled` and escalates on rejection, caching the
+/// answer for the process lifetime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReasoningMode {
+    Disabled,
+    LowEffort,
+    ProviderDefault,
+}
+
+impl ReasoningMode {
+    /// The next mode to try when a provider rejects this one.
+    pub fn escalate(self) -> Option<Self> {
+        match self {
+            Self::Disabled => Some(Self::LowEffort),
+            Self::LowEffort => Some(Self::ProviderDefault),
+            Self::ProviderDefault => None,
+        }
+    }
+
+    fn field(self) -> Option<Value> {
+        match self {
+            Self::Disabled => Some(json!({ "enabled": false })),
+            Self::LowEffort => Some(json!({ "effort": "low" })),
+            Self::ProviderDefault => None,
+        }
+    }
+}
+
+/// True when the failure is a provider refusing this reasoning mode, rather
+/// than a real error worth surfacing.
+pub fn is_reasoning_rejection(message: &str) -> bool {
+    let m = message.to_ascii_lowercase();
+    m.contains("reasoning is mandatory")
+        || (m.contains("reasoning") && (m.contains("cannot be disabled") || m.contains("not supported")))
+}
+
 /// Request body for one agent summary, demanding a strict JSON schema.
 pub fn agent_request_body(model: &str, transcript: &str) -> Value {
+    agent_request_body_with(model, transcript, ReasoningMode::Disabled)
+}
+
+/// As [`agent_request_body`], with an explicit reasoning mode.
+pub fn agent_request_body_with(
+    model: &str,
+    transcript: &str,
+    reasoning: ReasoningMode,
+) -> Value {
+    let mut body = agent_body_inner(model, transcript);
+    if let Some(field) = reasoning.field() {
+        body["reasoning"] = field;
+    }
+    body
+}
+
+fn agent_body_inner(model: &str, transcript: &str) -> Value {
     json!({
         "model": model,
         "temperature": 0.2,
@@ -160,6 +236,9 @@ pub struct OpenRouter {
     client: reqwest::Client,
     api_key: String,
     model: String,
+    /// Cached [`ReasoningMode`], escalated once if the provider rejects the
+    /// cheapest form. Stored as an index so it can be shared without a lock.
+    reasoning: std::sync::atomic::AtomicU8,
 }
 
 impl OpenRouter {
@@ -172,7 +251,25 @@ impl OpenRouter {
             client,
             api_key,
             model,
+            reasoning: std::sync::atomic::AtomicU8::new(0),
         }
+    }
+
+    fn reasoning_mode(&self) -> ReasoningMode {
+        match self.reasoning.load(std::sync::atomic::Ordering::Relaxed) {
+            0 => ReasoningMode::Disabled,
+            1 => ReasoningMode::LowEffort,
+            _ => ReasoningMode::ProviderDefault,
+        }
+    }
+
+    fn set_reasoning_mode(&self, mode: ReasoningMode) {
+        let index = match mode {
+            ReasoningMode::Disabled => 0,
+            ReasoningMode::LowEffort => 1,
+            ReasoningMode::ProviderDefault => 2,
+        };
+        self.reasoning.store(index, std::sync::atomic::Ordering::Relaxed);
     }
 
     async fn post(&self, body: Value) -> Result<String> {

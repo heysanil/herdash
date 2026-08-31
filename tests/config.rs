@@ -111,7 +111,7 @@ fn cli_defaults_match_the_spec() {
     assert_eq!(cli.interval, 1);
     assert_eq!(cli.cooldown, 45);
     assert_eq!(cli.lines, 200);
-    assert_eq!(cli.model, "meta-llama/llama-4-scout:nitro");
+    assert_eq!(cli.model, "openai/gpt-oss-120b");
     assert!(!cli.no_summaries);
     assert!(cli.socket.is_none());
 }

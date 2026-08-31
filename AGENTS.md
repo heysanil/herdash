@@ -66,6 +66,21 @@ These cost real debugging time. Do not rediscover them.
 - `params` is required on every request, even when empty (`{}`).
 - Inspect the live API with `herdr api schema --json` and `herdr api snapshot`.
 
+## OpenRouter gotchas
+
+- **Reasoning must be negotiated, not assumed.** Summarisation is extraction,
+  so chain-of-thought buys nothing and costs a lot. But no single setting works
+  everywhere: `reasoning: {enabled: false}` is cheapest and is the only thing
+  that makes kimi-k2.6 and qwen3.5-35b return content at all (otherwise they
+  spend the whole `max_tokens` budget thinking and return `finish_reason:
+  "length"` with an empty body — a call you still pay for), while the OpenAI
+  and Gemini endpoints reject it with "Reasoning is mandatory for this
+  endpoint". `ReasoningMode` starts at `Disabled` and escalates only on an
+  explicit refusal, caching the result. Do not hardcode one mode.
+- **Model choice is measured, not assumed.** `docs/benchmark.md` scores seven
+  models on cost, latency, prose quality and attention accuracy. Re-run
+  `examples/bench.rs` before changing the default.
+
 ## Design rules
 
 - **`src/summary/policy.rs` must stay pure.** No clocks, no I/O, no async; the
