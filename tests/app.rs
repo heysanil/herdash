@@ -1,0 +1,239 @@
+//! Selection, filtering and key handling.
+
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use herdash::app::{Action, App, Row};
+use herdash::herdr::types::Snapshot;
+
+const SNAPSHOT_FIXTURE: &str = include_str!("fixtures/snapshot.json");
+
+fn fixture() -> Snapshot {
+    let v: serde_json::Value = serde_json::from_str(SNAPSHOT_FIXTURE).unwrap();
+    serde_json::from_value(v["result"]["snapshot"].clone()).unwrap()
+}
+
+fn app_with_fixture() -> App {
+    let mut app = App::new(true);
+    app.apply_snapshot(&fixture());
+    app
+}
+
+fn key(c: char) -> KeyEvent {
+    KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
+}
+
+#[test]
+fn rows_interleave_group_headers_with_their_agents() {
+    let app = app_with_fixture();
+    let rows = app.rows();
+    assert!(matches!(rows[0], Row::Group(_)), "a group header leads");
+    assert_eq!(rows.iter().filter(|r| matches!(r, Row::Agent(_))).count(), 5);
+}
+
+#[test]
+fn the_first_agent_is_selected_on_first_snapshot() {
+    // beta leads (it holds the blocked agent), and blocked sorts first inside it.
+    assert_eq!(app_with_fixture().selected.as_deref(), Some("w3:p1"));
+}
+
+#[test]
+fn moving_down_skips_group_headers() {
+    let mut app = app_with_fixture();
+    let order: Vec<String> = app.agents().iter().map(|a| a.pane_id.clone()).collect();
+    app.on_key(key('j'));
+    assert_eq!(app.selected.as_deref(), Some(order[1].as_str()));
+    app.on_key(key('j'));
+    assert_eq!(app.selected.as_deref(), Some(order[2].as_str()));
+}
+
+#[test]
+fn selection_clamps_at_both_ends() {
+    let mut app = app_with_fixture();
+    let order: Vec<String> = app.agents().iter().map(|a| a.pane_id.clone()).collect();
+    app.on_key(key('k'));
+    assert_eq!(app.selected.as_deref(), Some(order[0].as_str()), "already at the top");
+    app.on_key(key('G'));
+    assert_eq!(app.selected.as_deref(), Some(order.last().unwrap().as_str()));
+    app.on_key(key('j'));
+    assert_eq!(
+        app.selected.as_deref(),
+        Some(order.last().unwrap().as_str()),
+        "already at the bottom"
+    );
+    app.on_key(key('g'));
+    assert_eq!(app.selected.as_deref(), Some(order[0].as_str()));
+}
+
+#[test]
+fn selection_survives_reordering_because_it_is_keyed_on_pane_id() {
+    let mut app = app_with_fixture();
+    app.on_key(key('j'));
+    let chosen = app.selected.clone().unwrap();
+
+    let mut snap = fixture();
+    for a in &mut snap.agents {
+        a.state_change_seq += 1;
+    }
+    snap.agents.reverse();
+    app.apply_snapshot(&snap);
+
+    assert_eq!(app.selected, Some(chosen), "the same agent stays selected");
+}
+
+#[test]
+fn selection_moves_to_a_neighbour_when_the_selected_agent_disappears() {
+    let mut app = app_with_fixture();
+    let selected = app.selected.clone().unwrap();
+
+    let mut snap = fixture();
+    snap.agents.retain(|a| a.pane_id != selected);
+    app.apply_snapshot(&snap);
+
+    let survivors: Vec<String> = app.agents().iter().map(|a| a.pane_id.clone()).collect();
+    assert!(app.selected.is_some());
+    assert!(survivors.contains(app.selected.as_ref().unwrap()));
+}
+
+#[test]
+fn selection_becomes_none_when_every_agent_disappears() {
+    let mut app = app_with_fixture();
+    let mut snap = fixture();
+    snap.agents.clear();
+    app.apply_snapshot(&snap);
+    assert!(app.selected.is_none());
+    assert!(app.rows().is_empty());
+    assert!(app.selected_agent().is_none());
+}
+
+#[test]
+fn stale_summary_slots_are_pruned_when_agents_disappear() {
+    let mut app = app_with_fixture();
+    app.slots.entry("w1:p1".into()).or_default();
+    app.slots.entry("w3:p1".into()).or_default();
+
+    let mut snap = fixture();
+    snap.agents.retain(|a| a.pane_id == "w1:p1");
+    app.apply_snapshot(&snap);
+
+    assert!(app.slots.contains_key("w1:p1"));
+    assert!(!app.slots.contains_key("w3:p1"), "no unbounded growth over a long session");
+}
+
+#[test]
+fn timings_are_pruned_with_the_agents_that_owned_them() {
+    let mut app = app_with_fixture();
+    assert_eq!(app.timings_len(), 5);
+    let mut snap = fixture();
+    snap.agents.retain(|a| a.pane_id == "w1:p1");
+    app.apply_snapshot(&snap);
+    assert_eq!(app.timings_len(), 1);
+}
+
+#[test]
+fn a_toggles_the_active_only_filter_and_takes_effect_immediately() {
+    let mut app = app_with_fixture();
+    assert_eq!(app.agents().len(), 5);
+    app.on_key(key('a'));
+    assert!(app.active_only);
+    assert_eq!(app.agents().len(), 3, "the filter applies without waiting for a poll");
+    app.on_key(key('a'));
+    assert_eq!(app.agents().len(), 5);
+}
+
+#[test]
+fn filtering_out_the_selected_agent_reselects_a_visible_one() {
+    let mut app = app_with_fixture();
+    // Select the idle agent, which the filter will hide.
+    while app.selected_agent().map(|a| a.pane_id.as_str()) != Some("w2:p1") {
+        app.on_key(key('j'));
+    }
+    app.on_key(key('a'));
+    let visible: Vec<String> = app.agents().iter().map(|a| a.pane_id.clone()).collect();
+    assert!(visible.contains(app.selected.as_ref().unwrap()));
+}
+
+#[test]
+fn counts_reflect_the_active_filter() {
+    let mut app = app_with_fixture();
+    assert_eq!(app.counts().total, 5);
+    app.on_key(key('a'));
+    assert_eq!(app.counts().total, 3);
+    assert_eq!(app.counts().idle, 0);
+}
+
+#[test]
+fn enter_asks_to_focus_the_selected_pane() {
+    let mut app = app_with_fixture();
+    let want = app.selected.clone().unwrap();
+    assert_eq!(
+        app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        Action::Focus(want)
+    );
+}
+
+#[test]
+fn r_forces_one_and_shift_r_forces_all() {
+    let mut app = app_with_fixture();
+    let want = app.selected.clone().unwrap();
+    assert_eq!(app.on_key(key('r')), Action::ForceOne(want));
+    assert_eq!(app.on_key(key('R')), Action::ForceAll);
+}
+
+#[test]
+fn q_and_ctrl_c_quit() {
+    let mut app = app_with_fixture();
+    assert_eq!(app.on_key(key('q')), Action::Quit);
+    assert!(app.should_quit);
+
+    let mut app = app_with_fixture();
+    assert_eq!(
+        app.on_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+        Action::Quit
+    );
+    assert!(app.should_quit);
+}
+
+#[test]
+fn question_mark_toggles_help_and_escape_closes_it() {
+    let mut app = app_with_fixture();
+    app.on_key(key('?'));
+    assert!(app.show_help);
+    app.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(!app.show_help);
+}
+
+#[test]
+fn help_swallows_navigation_keys_while_open() {
+    let mut app = app_with_fixture();
+    let before = app.selected.clone();
+    app.on_key(key('?'));
+    app.on_key(key('j'));
+    assert_eq!(app.selected, before, "navigation must not happen behind the overlay");
+    assert!(app.show_help, "and the overlay stays open");
+}
+
+#[test]
+fn quitting_from_the_help_overlay_only_closes_it() {
+    let mut app = app_with_fixture();
+    app.on_key(key('?'));
+    assert_eq!(app.on_key(key('q')), Action::None);
+    assert!(!app.show_help);
+    assert!(!app.should_quit, "the first q dismisses help rather than exiting");
+}
+
+#[test]
+fn arrows_open_and_close_detail_for_narrow_terminals() {
+    let mut app = app_with_fixture();
+    app.on_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+    assert!(app.detail_open);
+    app.on_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+    assert!(!app.detail_open);
+}
+
+#[test]
+fn keys_are_inert_with_no_agents() {
+    let mut app = App::new(true);
+    assert_eq!(app.on_key(key('j')), Action::None);
+    assert_eq!(app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)), Action::None);
+    assert_eq!(app.on_key(key('r')), Action::None);
+    assert_eq!(app.on_key(key('R')), Action::None);
+}
