@@ -307,24 +307,24 @@ Five agents under heavy activity: on the order of one cent per hour.
 
 ```
 ┌─ herdash ─────────────────────────── 5 agents · 2 working · 1 blocked · 2 idle ─┐
-│ FLEET  midnights is converging on revenue-categorization (2 agents, 1 verifying │
-│        docs); willow work is exploratory. One agent is waiting on an approval.  │
+│ FLEET  acme-core is converging on invoice-classification (2 agents, 1 verifying │
+│        docs); widget work is exploratory. One agent is waiting on an approval.  │
 ├────────────────────────────────────┬────────────────────────────────────────────┤
-│ midnights ───────────────────── 3  │ feat-revenue-categorization                │
-│ ⊘ feat-planetscale-seeding w3R 3m  │ claude · w3P:p1 · midnights · working 5m   │
-│   Waiting on approval to write to  │ ~/.herdr/worktrees/midnights/feat-revenue… │
+│ acme-core ───────────────────── 3  │ feat-invoice-classification                │
+│ ⊘ feat-isolated-db-seeding w3R 3m  │ claude · w3P:p1 · acme-core · working 5m   │
+│   Waiting on approval to write to  │ ~/.herdr/worktrees/acme-core/feat-revenue… │
 │   the seeded Planetscale branch.   │                                            │
 │ ● feat-revenue-categoriz… w3P  5m  │ TASK                                       │
 │   Verifying doc-accuracy findings  │ Verifying two documentation-accuracy       │
-│   on blankspace.ts.                │ findings from an external review of        │
-│ ○ feat-dynamic-reports    w3M  1h  │ blankspace.ts.                             │
+│   on normalizer.ts.                │ findings from an external review of        │
+│ ○ feat-modular-reports    w3M  1h  │ normalizer.ts.                             │
 │   Finished wiring the aggregation  │                                            │
 │   query for team reports.          │ NOW                                        │
-│                                    │ Running `git show HEAD:…/blankspace.ts` to │
-│ willow ─────────────────────── 1   │ judge the verifier's F7(d) recommendation  │
-│ ● explore-willow-vs-midni… w3Q 12m │ rather than apply it blindly.              │
+│                                    │ Running `git show HEAD:…/normalizer.ts` to │
+│ widget ─────────────────────── 1   │ judge the verifier's F7(d) recommendation  │
+│ ● explore-widget-vs-midni… w3Q 12m │ rather than apply it blindly.              │
 │   Comparing repo organization      │                                            │
-│   between willow and midnights.    │ RECENT                                     │
+│   between widget and acme-core.    │ RECENT                                     │
 │                                    │ · Confirmed F7(b); already test-guarded    │
 │ ungrouped ──────────────────── 1   │   by core.test.ts:631-638                  │
 │ ○ herdash                 w3S  2m  │ · Applied the comment-only correction      │
