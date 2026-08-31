@@ -1,5 +1,9 @@
 [tools]
-rust = "1.98"
+# Components are pinned explicitly rather than inherited. Without this, mise
+# takes whatever profile rustup defaults to, which is `default` on a typical
+# workstation but `minimal` on a fresh CI runner — so `cargo fmt` and `clippy`
+# exist locally and vanish in CI. Naming them here makes the two identical.
+rust = { version = "1.98", components = ["rustfmt", "clippy"] }
 
 [tasks.run]
 description = "Run herdash"
