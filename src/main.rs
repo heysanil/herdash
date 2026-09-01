@@ -19,7 +19,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 
 use herdash::app::{Action, App, ConnState};
-use herdash::config::{Cli, Settings, needs_missing_key};
+use herdash::config::{Cli, Settings};
 use herdash::herdr::client::Client;
 use herdash::herdr::types::Snapshot;
 use herdash::orchestrator::{self, FLEET_COOLDOWN, FleetJob, FleetRequest, SummaryJob, Update};
@@ -33,7 +33,7 @@ const TICK: Duration = Duration::from_millis(120);
 
 /// Ceiling on simultaneous summary calls.
 ///
-/// Without a bound, a fifty-agent session would fire fifty OpenRouter requests
+/// Without a bound, a fifty-agent session would fire fifty provider requests
 /// the moment it starts. Agents beyond the limit keep their latched triggers
 /// and are picked up on a later pass, so nothing is dropped — only deferred.
 const MAX_SUMMARY_TASKS: usize = 6;
@@ -107,16 +107,15 @@ async fn run(
         tx.clone(),
     ));
 
-    // A provider that still needs a key it doesn't have must never reach the
-    // client, or every agent would show a failed summary instead of the
-    // dashboard's own "summaries off (no key)" note.
     let summarizer: Option<Arc<dyn Summarizer>> = settings
         .provider
         .clone()
-        .filter(|p| !needs_missing_key(p))
         .map(|p| Arc::new(LlmClient::new(p)) as Arc<dyn Summarizer>);
 
     let mut app = App::new(settings.summaries);
+    if let Some(detail) = settings.summaries_detail.clone() {
+        app = app.with_summaries_detail(detail);
+    }
     app.apply_snapshot(&initial);
 
     let mut fleet_job = FleetJob::default();

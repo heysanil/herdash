@@ -487,3 +487,14 @@ fn scrolling_moves_the_selection_and_clamps() {
         Some(order.last().unwrap().as_str())
     );
 }
+
+#[test]
+fn the_summaries_mode_marks_a_local_provider_as_running() {
+    use herdash::app::SummariesMode as M;
+    assert!(M::On.enabled());
+    assert!(M::OnLocal.enabled());
+    assert!(!M::OffNoKey.enabled());
+    assert!(!M::OffByFlag.enabled());
+    // Running states carry no "off" note; the badge is rendered separately.
+    assert_eq!(M::OnLocal.note(), None);
+}

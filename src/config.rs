@@ -191,6 +191,8 @@ pub struct Settings {
     pub socket: PathBuf,
     /// Distinguishes "you turned it off" from "no key found".
     pub summaries: SummariesMode,
+    /// Provider name, or the variable a missing key was looked for in.
+    pub summaries_detail: Option<String>,
     pub provider: Option<ResolvedProvider>,
     pub interval: Duration,
     pub cooldown: Duration,
@@ -205,16 +207,22 @@ impl Settings {
         let home = home_dir();
         let env = |k: &str| std::env::var(k).ok();
         let provider = resolve_provider(cli, &env, &home)?;
-        let summaries = if cli.no_summaries {
-            SummariesMode::OffByFlag
-        } else if provider.as_ref().is_some_and(needs_missing_key) {
-            SummariesMode::OffNoKey
-        } else {
-            SummariesMode::On
+        let (summaries, summaries_detail) = match &provider {
+            None => (SummariesMode::OffByFlag, None),
+            Some(p) if needs_missing_key(p) => (
+                SummariesMode::OffNoKey,
+                p.id.env_var().map(|v| format!("${v}")),
+            ),
+            Some(p) if p.is_loopback() => (SummariesMode::OnLocal, Some(p.id.as_str().to_string())),
+            Some(p) => (SummariesMode::On, Some(p.id.as_str().to_string())),
         };
+        // A provider that resolved but has no usable key must not be handed
+        // to the client, or every agent would show a failed summary.
+        let provider = provider.filter(|p| !needs_missing_key(p));
         Ok(Self {
             socket: resolve_socket(cli.socket.as_deref(), &env, &home),
             summaries,
+            summaries_detail,
             provider,
             interval: Duration::from_secs(cli.interval.unwrap_or(DEFAULT_INTERVAL).max(1)),
             cooldown: Duration::from_secs(cli.cooldown.unwrap_or(DEFAULT_COOLDOWN)),

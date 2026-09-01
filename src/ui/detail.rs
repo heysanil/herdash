@@ -131,7 +131,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         }
     } else if !app.summaries_enabled() {
         for l in wrap_to(
-            "Summaries are off. Set OPENROUTER_API_KEY or drop a key in ~/.openrouter-key.",
+            "Summaries are off. Set --provider and its API key env var (see --help).",
             width,
             3,
         ) {

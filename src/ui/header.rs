@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use super::{theme, wrap_to};
-use crate::app::{App, ConnState};
+use crate::app::{App, ConnState, SummariesMode};
 
 /// Header height: one title line, plus up to two fleet-summary lines when the
 /// terminal is tall enough to spare them.
@@ -42,8 +42,16 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     if let ConnState::Reconnecting { .. } = app.conn {
         spans.push(Span::styled("  ⟳ reconnecting", theme::alert()));
     }
-    if let Some(note) = app.summaries.note() {
-        spans.push(Span::styled(format!("  {note}"), theme::dim()));
+    // A detail, when present, replaces the generic note with a specific one.
+    // `note()` keeps its existing `&'static str` contract for the cases that
+    // need no provider name, so `tests/app.rs`'s assertions still hold.
+    let annotation = match (app.summaries, app.summaries_detail.as_deref()) {
+        (SummariesMode::OnLocal, Some(p)) => Some(format!("summaries on · {p} (local)")),
+        (SummariesMode::OffNoKey, Some(v)) => Some(format!("summaries off (no key: {v})")),
+        (mode, _) => mode.note().map(str::to_string),
+    };
+    if let Some(a) = annotation {
+        spans.push(Span::styled(format!("  {a}"), theme::dim()));
     }
     if let Some(notice) = &app.notice {
         spans.push(Span::styled(format!("  {notice}"), theme::dim()));

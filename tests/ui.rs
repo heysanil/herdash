@@ -565,3 +565,24 @@ fn wrapping_terminates_when_the_width_is_narrower_than_one_glyph() {
     let out = wrap_to("日本語", 1, 3);
     assert!(out.len() <= 3);
 }
+
+#[test]
+fn the_header_advertises_a_local_provider() {
+    // This is a claim about egress, so it may only appear for a loopback
+    // endpoint — see `is_loopback_url`.
+    let mut a = App::new(SummariesMode::OnLocal).with_summaries_detail("ollama".into());
+    a.apply_snapshot(&fixture());
+    let text = render(&a, 140, 40);
+    assert!(text.contains("ollama"), "{text}");
+    assert!(text.contains("local"), "{text}");
+}
+
+#[test]
+fn the_header_names_the_variable_it_looked_for() {
+    let mut a =
+        App::new(SummariesMode::OffNoKey).with_summaries_detail("$ANTHROPIC_API_KEY".into());
+    a.apply_snapshot(&fixture());
+    let text = render(&a, 140, 40);
+    assert!(text.contains("summaries off"), "{text}");
+    assert!(text.contains("ANTHROPIC_API_KEY"), "{text}");
+}
