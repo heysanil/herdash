@@ -204,6 +204,156 @@ async fn a_generic_endpoint_starts_at_provider_default() {
     assert_eq!(calls.load(Ordering::Relaxed), 1, "no wasted round trip");
 }
 
+/// Minimal HTTP server that records the request's headers and JSON body,
+/// then always replies 200 with `payload`. Kept separate from [`stub`]
+/// (which parses `reasoning` out of the body for the escalation tests
+/// above) because contorting one helper to serve both purposes would only
+/// obscure what each test is actually asserting.
+async fn header_stub(
+    listener: TcpListener,
+    headers: Arc<std::sync::Mutex<std::collections::HashMap<String, String>>>,
+    body_out: Arc<std::sync::Mutex<serde_json::Value>>,
+    payload: serde_json::Value,
+) {
+    loop {
+        let Ok((mut socket, _)) = listener.accept().await else {
+            return;
+        };
+        let headers = Arc::clone(&headers);
+        let body_out = Arc::clone(&body_out);
+        let payload = payload.clone();
+        tokio::spawn(async move {
+            let (r, mut w) = socket.split();
+            let mut reader = BufReader::new(r);
+            let mut content_length = 0usize;
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).await.unwrap_or(0) == 0 {
+                    return;
+                }
+                if line == "\r\n" || line == "\n" {
+                    break;
+                }
+                if let Some((k, v)) = line.trim_end().split_once(':') {
+                    let k = k.trim().to_ascii_lowercase();
+                    let v = v.trim().to_string();
+                    if k == "content-length" {
+                        content_length = v.parse().unwrap_or(0);
+                    }
+                    headers.lock().unwrap().insert(k, v);
+                }
+            }
+            let mut body = vec![0u8; content_length];
+            tokio::io::AsyncReadExt::read_exact(&mut reader, &mut body)
+                .await
+                .ok();
+            let json: serde_json::Value =
+                serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
+            *body_out.lock().unwrap() = json;
+
+            let body = payload.to_string();
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = w.write_all(resp.as_bytes()).await;
+            let _ = w.flush().await;
+        });
+    }
+}
+
+/// No test drove `LlmClient` in Anthropic dialect at all: every stub above
+/// is OpenAI-wire. This is the one that exercises `x-api-key` +
+/// `anthropic-version`, the absence of a bearer token, and that the
+/// starting rung actually disables thinking on the wire.
+#[tokio::test]
+async fn the_anthropic_wire_sends_x_api_key_and_no_bearer_token() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}/v1/messages", listener.local_addr().unwrap());
+    let headers = Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+    let body_out = Arc::new(std::sync::Mutex::new(serde_json::Value::Null));
+    let payload = serde_json::json!({
+        "stop_reason": "end_turn",
+        "content": [{
+            "type": "text",
+            "text": r#"{"headline":"h","task":"t","now":"n","recent":[],"needs_attention":false,"attention_reason":""}"#
+        }]
+    });
+    tokio::spawn(header_stub(
+        listener,
+        Arc::clone(&headers),
+        Arc::clone(&body_out),
+        payload,
+    ));
+
+    let provider = ResolvedProvider {
+        id: ProviderId::Anthropic,
+        dialect: preset(ProviderId::Anthropic).dialect,
+        base_url: "http://unused".into(),
+        api_key: Some("k".into()),
+        model: "m".into(),
+    };
+    let client = LlmClient::new(provider).with_endpoint(endpoint);
+    client
+        .summarize_agent("transcript")
+        .await
+        .expect("the Anthropic-shaped stub response must parse");
+
+    let seen = headers.lock().unwrap();
+    assert_eq!(seen.get("x-api-key").map(String::as_str), Some("k"));
+    assert_eq!(
+        seen.get("anthropic-version").map(String::as_str),
+        Some(herdash::summary::anthropic::ANTHROPIC_VERSION)
+    );
+    assert!(
+        seen.get("authorization").is_none(),
+        "the Anthropic wire must never send a bearer token: {seen:?}"
+    );
+    drop(seen);
+
+    let body = body_out.lock().unwrap();
+    assert_eq!(
+        body["thinking"],
+        serde_json::json!({"type": "disabled"}),
+        "the starting rung must disable thinking on the wire"
+    );
+}
+
+/// The sibling check on the OpenAI wire, so the header gap is closed on
+/// both sides in the same pass.
+#[tokio::test]
+async fn the_openai_wire_sends_a_bearer_token_and_no_x_api_key() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!(
+        "http://{}/v1/chat/completions",
+        listener.local_addr().unwrap()
+    );
+    let headers = Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+    let body_out = Arc::new(std::sync::Mutex::new(serde_json::Value::Null));
+    let payload = serde_json::json!({"choices":[{"message":{"content":
+        r#"{"headline":"h","task":"t","now":"n","recent":[],"needs_attention":false,"attention_reason":""}"#
+    }}]});
+    tokio::spawn(header_stub(
+        listener,
+        Arc::clone(&headers),
+        Arc::clone(&body_out),
+        payload,
+    ));
+
+    let client = LlmClient::new(stub_provider(&endpoint)).with_endpoint(endpoint);
+    client.summarize_agent("transcript").await.unwrap();
+
+    let seen = headers.lock().unwrap();
+    assert_eq!(
+        seen.get("authorization").map(String::as_str),
+        Some("Bearer k")
+    );
+    assert!(
+        seen.get("x-api-key").is_none(),
+        "the OpenAI wire must never send x-api-key: {seen:?}"
+    );
+}
+
 /// A stale rejection arriving late must not lower the cached rung.
 ///
 /// Deterministic on purpose: the interleaving this guards against does not
