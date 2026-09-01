@@ -56,6 +56,10 @@ pub struct Cli {
     /// config; `ansi` uses terminal-palette colors only.
     #[arg(long, value_enum, default_value_t = ThemeSource::Auto)]
     pub theme: ThemeSource,
+
+    /// Do not publish a `$herdash` token to herdr's sidebar.
+    #[arg(long)]
+    pub no_sidebar_token: bool,
 }
 
 /// The user's home directory, falling back to `.` if it cannot be determined.
@@ -116,6 +120,9 @@ pub struct Settings {
     pub lines: u32,
     pub mouse: bool,
     pub palette: crate::ui::palette::Palette,
+    /// The herdr workspace this process runs in, from `$HERDR_WORKSPACE_ID`.
+    /// `None` when herdash is not running inside a herdr pane.
+    pub workspace_id: Option<String>,
 }
 
 impl Settings {
@@ -144,6 +151,13 @@ impl Settings {
             cooldown: Duration::from_secs(cli.cooldown),
             lines: cli.lines,
             mouse: !cli.no_mouse,
+            workspace_id: if cli.no_sidebar_token {
+                None
+            } else {
+                // herdr injects this into every managed pane; its absence
+                // simply means there is no sidebar to report to.
+                std::env::var("HERDR_WORKSPACE_ID").ok().filter(|s| !s.is_empty())
+            },
             palette: match cli.theme {
                 ThemeSource::Ansi => crate::ui::palette::Palette::default(),
                 ThemeSource::Auto => crate::ui::palette::Palette::from_herdr_config(

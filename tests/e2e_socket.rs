@@ -3,6 +3,7 @@
 //! without a herdr installation.
 
 use std::path::PathBuf;
+use std::time::Duration;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use herdash::herdr::client::Client;
@@ -83,6 +84,9 @@ async fn serve(listener: UnixListener, tx: UnboundedSender<String>) {
                 }
                 "agent.focus" => {
                     serde_json::json!({"id": id, "result": {"type": "agent_focus"}})
+                }
+                "workspace.report_metadata" => {
+                    serde_json::json!({"id": id, "result": {"type": "ok"}})
                 }
                 other => serde_json::json!({
                     "id": id,
@@ -272,5 +276,49 @@ async fn a_normal_read_uses_full_history_and_makes_one_call() {
         rx.try_recv().is_err(),
         "no fallback call for an agent that answered"
     );
+    let _ = std::fs::remove_file(&path);
+}
+
+/// herdash names itself in herdr's sidebar by publishing a `$herdash`
+/// metadata token, rather than renaming the workspace — a rename would
+/// relabel every neighbouring pane's space too. The TTL is what makes the
+/// token safe: herdr expires it, so a killed herdash leaves nothing behind.
+#[tokio::test]
+async fn the_sidebar_token_is_published_with_a_ttl() {
+    let path = socket_path("token");
+    let listener = UnixListener::bind(&path).unwrap();
+    let (tx, mut rx) = unbounded_channel();
+    tokio::spawn(serve(listener, tx));
+
+    let client = Client::new(&path);
+    client
+        .report_workspace_token("w1", "herdash", Some("herdash"), Duration::from_secs(30))
+        .await
+        .unwrap();
+
+    let sent: serde_json::Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+    assert_eq!(sent["method"], "workspace.report_metadata");
+    assert_eq!(sent["params"]["workspace_id"], "w1");
+    assert_eq!(sent["params"]["source"], "herdash", "attributed, so herdr can scope it");
+    assert_eq!(sent["params"]["tokens"]["herdash"], "herdash");
+    assert_eq!(sent["params"]["ttl_ms"], 30_000);
+    let _ = std::fs::remove_file(&path);
+}
+
+/// Clearing sends an explicit null, which is how herdr removes a token.
+#[tokio::test]
+async fn the_sidebar_token_is_cleared_with_a_null_value() {
+    let path = socket_path("token-clear");
+    let listener = UnixListener::bind(&path).unwrap();
+    let (tx, mut rx) = unbounded_channel();
+    tokio::spawn(serve(listener, tx));
+
+    Client::new(&path)
+        .report_workspace_token("w1", "herdash", None, Duration::from_secs(1))
+        .await
+        .unwrap();
+
+    let sent: serde_json::Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+    assert!(sent["params"]["tokens"]["herdash"].is_null());
     let _ = std::fs::remove_file(&path);
 }

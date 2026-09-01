@@ -45,6 +45,14 @@ These cost real debugging time. Do not rediscover them.
   55-row pane: `lines = 60` fails, `lines = 40` succeeds, and `visible` always
   works. `Client::read_agent` falls back to `visible` for exactly this reason —
   without it, the agents you most want summarized never get a summary.
+- **Name yourself with metadata, never `workspace.rename`.** herdr's sidebar
+  renders "spaces" from `ui.sidebar.spaces.rows`, which accepts `$name` tokens
+  supplied via `workspace.report_metadata`. That is the supported way for a
+  program to appear there. `workspace.rename` relabels the entire space — every
+  neighbouring pane included — and its `label` is non-nullable, so there is no
+  clean restore. Only `pane.rename` accepts `null` to clear. The metadata
+  token's `ttl_ms` means herdr expires it for us, so a hard kill needs no
+  cleanup path (verified: a 3s token was gone within 6s).
 - **`agent.read` always reports `revision: 0`.** The field exists on the read
   payload but carries no information, so it is useless as a change signal.
   Change detection uses the *snapshot* revision, captured when the job is

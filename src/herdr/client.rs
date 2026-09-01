@@ -314,6 +314,39 @@ impl Client {
         Ok(env.read)
     }
 
+    /// Publish a metadata token onto the workspace herdash runs in.
+    ///
+    /// herdr's sidebar renders "spaces" from a row template, and
+    /// `ui.sidebar.spaces.rows` accepts `$name` tokens supplied through
+    /// workspace metadata. Reporting one is therefore the supported way for a
+    /// program to name itself in the sidebar next to the repo and branch —
+    /// as opposed to `workspace.rename`, which would relabel the whole space
+    /// and every neighbouring pane along with it.
+    ///
+    /// `ttl_ms` is what makes this safe: herdr expires the token on its own,
+    /// so a herdash that is killed rather than closed leaves nothing behind.
+    /// Verified against 0.8.2 — a 3s token was gone within 6s.
+    pub async fn report_workspace_token(
+        &self,
+        workspace_id: &str,
+        name: &str,
+        value: Option<&str>,
+        ttl: Duration,
+    ) -> Result<()> {
+        let _: serde_json::Value = self
+            .request(
+                "workspace.report_metadata",
+                json!({
+                    "workspace_id": workspace_id,
+                    "source": "herdash",
+                    "tokens": { name: value },
+                    "ttl_ms": ttl.as_millis() as u64,
+                }),
+            )
+            .await?;
+        Ok(())
+    }
+
     /// Jump herdr's UI to the pane hosting this agent.
     pub async fn focus_agent(&self, pane_id: &str) -> Result<()> {
         let _: serde_json::Value = self

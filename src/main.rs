@@ -31,6 +31,16 @@ use herdash::ui;
 /// Redraw cadence, so ages and the spinner stay live.
 const TICK: Duration = Duration::from_millis(120);
 
+/// How long herdr keeps the sidebar token without a refresh.
+///
+/// Short enough that a herdash killed rather than closed disappears from the
+/// sidebar promptly, long enough that a slow poll cannot make it flicker.
+const SIDEBAR_TOKEN_TTL: Duration = Duration::from_secs(30);
+/// Refresh well inside the TTL so one dropped call is not visible.
+const SIDEBAR_TOKEN_REFRESH: Duration = Duration::from_secs(10);
+/// Token name; surfaces in herdr as `$herdash`.
+const SIDEBAR_TOKEN: &str = "herdash";
+
 /// Ceiling on simultaneous summary calls.
 ///
 /// Without a bound, a fifty-agent session would fire fifty OpenRouter requests
@@ -106,6 +116,11 @@ async fn run(
         settings.interval,
         tx.clone(),
     ));
+
+    // Name this space in herdr's sidebar for as long as herdash is running.
+    if let Some(workspace) = settings.workspace_id.clone() {
+        tokio::spawn(publish_sidebar_token(client.clone(), workspace));
+    }
 
     let summarizer: Option<Arc<dyn Summarizer>> = settings
         .api_key
@@ -183,7 +198,35 @@ async fn run(
             }
         }
     }
+    // Best-effort: drop the sidebar token on a clean exit rather than making
+    // the user wait out the TTL. The TTL remains the backstop for a hard kill.
+    if let Some(workspace) = settings.workspace_id.as_deref() {
+        let _ = client
+            .report_workspace_token(workspace, SIDEBAR_TOKEN, None, Duration::from_secs(1))
+            .await;
+    }
+
     Ok(())
+}
+
+/// Keep a `$herdash` token alive on this workspace while the process runs.
+///
+/// herdr renders it wherever `ui.sidebar.spaces.rows` mentions `$herdash`,
+/// alongside the repo and branch. Failures are deliberately silent: a
+/// cosmetic sidebar entry must never interrupt the dashboard.
+async fn publish_sidebar_token(client: Client, workspace_id: String) {
+    let mut ticker = tokio::time::interval(SIDEBAR_TOKEN_REFRESH);
+    loop {
+        ticker.tick().await;
+        let _ = client
+            .report_workspace_token(
+                &workspace_id,
+                SIDEBAR_TOKEN,
+                Some(SIDEBAR_TOKEN),
+                SIDEBAR_TOKEN_TTL,
+            )
+            .await;
+    }
 }
 
 /// Translate a mouse event, returning a pane id when the click asks to focus.

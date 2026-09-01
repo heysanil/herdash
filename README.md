@@ -106,6 +106,28 @@ Mouse works too: click a row to select it, click the selected row to focus that
 pane in herdr, and scroll to move the selection. `--no-mouse` turns capture off
 if you would rather keep your terminal's own text selection.
 
+### Showing herdash in herdr's sidebar
+
+While it runs, herdash publishes a `$herdash` metadata token onto the herdr
+space it lives in. Add that token to your space rows in
+`~/.config/herdr/config.toml` and the sidebar labels the space running herdash,
+alongside the repo and branch it already shows:
+
+```toml
+[ui.sidebar.spaces]
+rows = [["state_icon", "workspace"], ["branch", "git_status", "$herdash"]]
+```
+
+Reload with `herdr server reload-config`. Pass `--no-sidebar-token` to publish
+nothing.
+
+This uses herdr's metadata mechanism rather than `workspace.rename` on purpose.
+A rename would relabel the **whole space**, including any neighbouring agent
+panes in it, and there is no way to restore the previous label automatically.
+The token is scoped to herdash and carries a 30-second TTL that herdr expires
+on its own, so a herdash that is killed rather than closed still disappears
+from the sidebar without leaving anything behind.
+
 ### Colors
 
 herdash draws with **ANSI-named colors and no background**, so it adopts your
