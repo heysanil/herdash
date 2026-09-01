@@ -1,8 +1,8 @@
 //! Which endpoint to talk to, and in which dialect.
 //!
 //! A **preset** is static table data with holes; a **resolved provider** has
-//! none left. They are separate types because `herdash init` exists precisely
-//! to hold the incomplete middle state.
+//! none left. They are separate types because a planned `herdash init` flow
+//! (not yet built) exists precisely to hold the incomplete middle state.
 
 /// The two request/response shapes. Selects a codec, nothing more.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -278,7 +278,8 @@ impl ResolvedProvider {
         }
     }
 
-    /// The model-list endpoint, used by `herdash init` and as a liveness probe.
+    /// The model-list endpoint, for the planned `herdash init` flow (not yet
+    /// built) and as a liveness probe.
     pub fn models_url(&self) -> String {
         match self.dialect.wire() {
             Wire::OpenAi => self.join("models"),
