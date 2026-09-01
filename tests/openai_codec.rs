@@ -65,6 +65,23 @@ fn other_openai_wire_dialects_keep_max_tokens_and_temperature() {
     }
 }
 
+/// Agent summarization is extraction and wants determinism; the fleet
+/// overview is a sentence or two of prose and gets more room. A shared
+/// `base_body` must not collapse that distinction back to one value.
+#[test]
+fn the_agent_and_fleet_bodies_keep_their_own_temperatures() {
+    let b = agent(Dialect::OpenRouter, ReasoningMode::Disabled);
+    assert_eq!(b["temperature"], 0.2, "agent summaries want determinism");
+
+    let f = fleet_request_body(
+        Dialect::OpenRouter,
+        "m",
+        &["a".into(), "b".into()],
+        ReasoningMode::Disabled,
+    );
+    assert_eq!(f["temperature"], 0.3, "the fleet overview is prose");
+}
+
 #[test]
 fn a_thinking_rung_gets_a_larger_budget() {
     // Reasoning tokens are billed against the output cap, so a rung that

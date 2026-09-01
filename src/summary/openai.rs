@@ -34,11 +34,17 @@ pub fn reasoning_field(d: Dialect, rung: ReasoningMode) -> Option<(&'static str,
     }
 }
 
-fn base_body(d: Dialect, model: &str, max_tokens: u32, messages: Value) -> Value {
+/// Agent summarization is extraction, not prose, so it wants determinism.
+const AGENT_TEMPERATURE: f64 = 0.2;
+/// The fleet overview is a sentence or two of prose, so it gets more room
+/// than the agent summary.
+const FLEET_TEMPERATURE: f64 = 0.3;
+
+fn base_body(d: Dialect, model: &str, max_tokens: u32, temperature: f64, messages: Value) -> Value {
     let mut body = json!({ "model": model, "messages": messages });
     body[d.token_cap_field()] = json!(max_tokens);
     if d.sends_temperature() {
-        body["temperature"] = json!(0.2);
+        body["temperature"] = json!(temperature);
     }
     body
 }
@@ -55,7 +61,13 @@ pub fn agent_request_body(d: Dialect, model: &str, transcript: &str, rung: Reaso
             )
         }
     ]);
-    let mut body = base_body(d, model, agent_max_tokens(d.reasons_at(rung)), messages);
+    let mut body = base_body(
+        d,
+        model,
+        agent_max_tokens(d.reasons_at(rung)),
+        AGENT_TEMPERATURE,
+        messages,
+    );
     body["response_format"] = json!({
         "type": "json_schema",
         "json_schema": {
@@ -85,7 +97,13 @@ pub fn fleet_request_body(
         { "role": "system", "content": FLEET_SYSTEM },
         { "role": "user", "content": headlines.join("\n") }
     ]);
-    let mut body = base_body(d, model, fleet_max_tokens(d.reasons_at(rung)), messages);
+    let mut body = base_body(
+        d,
+        model,
+        fleet_max_tokens(d.reasons_at(rung)),
+        FLEET_TEMPERATURE,
+        messages,
+    );
     if let Some((key, value)) = reasoning_field(d, rung) {
         body[key] = value;
     }
