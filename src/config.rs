@@ -185,6 +185,43 @@ pub fn needs_missing_key(p: &ResolvedProvider) -> bool {
     preset(p.id).key == KeyRequirement::Required && p.api_key.is_none()
 }
 
+/// Decide the summaries mode and its header detail from a resolved
+/// provider.
+///
+/// Separate from [`Settings::from_cli`] so tests can drive it with an
+/// injected environment rather than mutating process-global state. The
+/// `OffNoKey` case distinguishes two situations that look identical from
+/// `needs_missing_key` alone: no credential was ever found for the
+/// provider's variable, versus the variable *is* set but `resolve_api_key`
+/// declined to forward it (an origin mismatch — see its doc comment). The
+/// second case needs a different message, or the user is told a variable
+/// they set is not set, with no hint that `$HERDASH_API_KEY` gets them
+/// through.
+pub fn summaries_status(
+    provider: &Option<ResolvedProvider>,
+    env: &dyn Fn(&str) -> Option<String>,
+) -> (SummariesMode, Option<String>) {
+    match provider {
+        None => (SummariesMode::OffByFlag, None),
+        Some(p) if needs_missing_key(p) => {
+            let var = p.id.env_var();
+            let declined = var.is_some_and(|v| env(v).is_some_and(|s| !s.trim().is_empty()));
+            (
+                SummariesMode::OffNoKey,
+                var.map(|v| {
+                    if declined {
+                        format!("${v} not sent to this --base-url; use $HERDASH_API_KEY")
+                    } else {
+                        format!("${v}")
+                    }
+                }),
+            )
+        }
+        Some(p) if p.is_loopback() => (SummariesMode::OnLocal, Some(p.id.as_str().to_string())),
+        Some(p) => (SummariesMode::On, Some(p.id.as_str().to_string())),
+    }
+}
+
 /// Bundle of resolved runtime settings.
 #[derive(Debug, Clone)]
 pub struct Settings {
@@ -207,15 +244,7 @@ impl Settings {
         let home = home_dir();
         let env = |k: &str| std::env::var(k).ok();
         let provider = resolve_provider(cli, &env, &home)?;
-        let (summaries, summaries_detail) = match &provider {
-            None => (SummariesMode::OffByFlag, None),
-            Some(p) if needs_missing_key(p) => (
-                SummariesMode::OffNoKey,
-                p.id.env_var().map(|v| format!("${v}")),
-            ),
-            Some(p) if p.is_loopback() => (SummariesMode::OnLocal, Some(p.id.as_str().to_string())),
-            Some(p) => (SummariesMode::On, Some(p.id.as_str().to_string())),
-        };
+        let (summaries, summaries_detail) = summaries_status(&provider, &env);
         // A provider that resolved but has no usable key must not be handed
         // to the client, or every agent would show a failed summary.
         let provider = provider.filter(|p| !needs_missing_key(p));

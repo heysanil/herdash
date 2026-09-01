@@ -147,6 +147,47 @@ fn an_empty_key_file_yields_none() {
 }
 
 #[test]
+fn the_no_key_message_names_the_bare_variable_when_none_was_ever_set() {
+    use herdash::config::summaries_status;
+    use herdash::summary::provider::{Dialect, ResolvedProvider};
+
+    let provider = Some(ResolvedProvider {
+        id: ProviderId::Openai,
+        dialect: Dialect::OpenAiDirect,
+        base_url: "http://gateway.internal/v1".into(),
+        api_key: None,
+        model: "m".into(),
+    });
+    let (mode, detail) = summaries_status(&provider, &env_from(&[]));
+    assert_eq!(mode, herdash::app::SummariesMode::OffNoKey);
+    assert_eq!(detail.as_deref(), Some("$OPENAI_API_KEY"));
+}
+
+#[test]
+fn the_no_key_message_names_herdash_api_key_when_a_vendor_key_was_declined() {
+    // `--provider openai --base-url http://gateway.internal/v1` with
+    // $OPENAI_API_KEY exported: resolve_api_key correctly declines to
+    // forward it (origin binding), so the header must not claim the
+    // variable is unset — it must name it and point at $HERDASH_API_KEY.
+    use herdash::config::summaries_status;
+    use herdash::summary::provider::{Dialect, ResolvedProvider};
+
+    let provider = Some(ResolvedProvider {
+        id: ProviderId::Openai,
+        dialect: Dialect::OpenAiDirect,
+        base_url: "http://gateway.internal/v1".into(),
+        api_key: None,
+        model: "m".into(),
+    });
+    let env = env_from(&[("OPENAI_API_KEY", "sk-o")]);
+    let (mode, detail) = summaries_status(&provider, &env);
+    assert_eq!(mode, herdash::app::SummariesMode::OffNoKey);
+    let detail = detail.expect("a declined key must still get a detail message");
+    assert!(detail.contains("OPENAI_API_KEY"), "{detail}");
+    assert!(detail.contains("HERDASH_API_KEY"), "{detail}");
+}
+
+#[test]
 fn cli_defaults_match_the_spec() {
     // The layered flags parse to `None` absent, not their eventual default —
     // see `provider_resolution::flags_are_distinguishable_from_their_default_values`.
