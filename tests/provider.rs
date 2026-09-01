@@ -163,6 +163,34 @@ fn loopback_is_decided_by_host_not_by_preset_name() {
 }
 
 #[test]
+fn a_bracketed_host_with_trailing_text_is_not_loopback() {
+    // `[::1].evil.test` must not masquerade as loopback by having the
+    // bracket contents read and the remainder discarded.
+    assert!(!is_loopback_url("http://[::1].evil.test/v1"));
+    assert!(!is_loopback_url("http://[::1]x/v1"));
+    // A port after the bracket is the only thing allowed to follow it.
+    assert!(is_loopback_url("http://[::1]:11434/v1"));
+    assert!(is_loopback_url("http://[::1]/v1"));
+}
+
+#[test]
+fn an_ipv4_mapped_loopback_address_counts_as_local() {
+    assert!(is_loopback_url("http://[::ffff:127.0.0.1]:11434/v1"));
+}
+
+#[test]
+fn a_gateway_base_url_with_a_path_prefix_keeps_its_prefix() {
+    // `openai-compatible` exists for gateways, which commonly live under a
+    // path rather than at the root.
+    let p = resolved(ProviderId::OpenaiCompatible, "https://gw.test/openai/v1");
+    assert_eq!(
+        p.completions_url(),
+        "https://gw.test/openai/v1/chat/completions"
+    );
+    assert_eq!(p.models_url(), "https://gw.test/openai/v1/models");
+}
+
+#[test]
 fn origin_comparison_ignores_path_and_trailing_slash() {
     assert!(same_origin(
         "https://api.openai.com/v1",

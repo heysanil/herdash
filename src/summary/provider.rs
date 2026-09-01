@@ -281,11 +281,16 @@ pub fn is_loopback_url(url: &str) -> bool {
         return true;
     }
     host.parse::<std::net::IpAddr>()
-        .map(|ip| ip.is_loopback())
+        .map(|ip| ip.to_canonical().is_loopback())
         .unwrap_or(false)
 }
 
-/// Scheme + host + port, ignoring path and trailing slash.
+/// Scheme + host + port, ignoring path and trailing slash. Userinfo (if any)
+/// is also part of the comparison, so `https://api.openai.com/v1` and
+/// `https://user:pw@api.openai.com/v1` are treated as different origins.
+/// That is deliberately fail-closed: when in doubt, the comparison simply
+/// refuses to match rather than risk attaching a vendor key to the wrong
+/// origin.
 pub fn same_origin(a: &str, b: &str) -> bool {
     match (origin_of(a), origin_of(b)) {
         (Some(x), Some(y)) => x == y,
@@ -312,9 +317,15 @@ fn host_of(url: &str) -> Option<String> {
     let (_, rest) = url.split_once("://")?;
     let authority = rest.split(['/', '?', '#']).next()?;
     let authority = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
-    // Bracketed IPv6 literal, e.g. [::1]:11434
+    // Bracketed IPv6 literal, e.g. [::1]:11434. The bracket must close the
+    // host: anything between `]` and the port is malformed, and accepting it
+    // would let `[::1].evil.test` masquerade as loopback.
     if let Some(inner) = authority.strip_prefix('[') {
-        return inner.split_once(']').map(|(h, _)| h.to_string());
+        let (host, rest) = inner.split_once(']')?;
+        if !(rest.is_empty() || rest.starts_with(':')) {
+            return None;
+        }
+        return Some(host.to_ascii_lowercase());
     }
     let host = authority.split(':').next()?;
     if host.is_empty() {
