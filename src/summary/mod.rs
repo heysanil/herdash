@@ -2,6 +2,7 @@
 
 pub mod openrouter;
 pub mod policy;
+pub mod prompts;
 pub mod types;
 
 use anyhow::Result;

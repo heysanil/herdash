@@ -316,3 +316,58 @@ fn only_reasoning_refusals_are_treated_as_escalation_signals() {
         "model did not return the requested schema"
     ));
 }
+
+mod prompts {
+    use herdash::summary::prompts::{
+        agent_max_tokens, clamp_transcript, fleet_max_tokens, summary_schema,
+    };
+
+    #[test]
+    fn the_schema_is_bare_with_no_vendor_wrapper() {
+        let s = summary_schema();
+        assert_eq!(s["type"], "object");
+        assert_eq!(s["additionalProperties"], false);
+        for field in [
+            "headline",
+            "task",
+            "now",
+            "recent",
+            "needs_attention",
+            "attention_reason",
+        ] {
+            assert!(
+                s["properties"].get(field).is_some(),
+                "schema is missing {field}"
+            );
+            assert!(
+                s["required"].as_array().unwrap().iter().any(|r| r == field),
+                "{field} is not required"
+            );
+        }
+        // OpenAI wraps this in `json_schema.name`/`strict`; Anthropic does not.
+        // Neither wrapper belongs in the shared schema itself.
+        assert!(s.get("name").is_none());
+        assert!(s.get("strict").is_none());
+    }
+
+    #[test]
+    fn budgets_leave_room_for_reasoning_tokens() {
+        // Reasoning tokens are billed against the same output budget. The
+        // 200-token fleet cap tuned for reasoning-disabled would otherwise be
+        // consumed entirely by reasoning, returning empty content with
+        // finish_reason "length" — a call you still pay for.
+        assert_eq!(agent_max_tokens(false), 900);
+        assert_eq!(fleet_max_tokens(false), 200);
+        assert!(agent_max_tokens(true) > agent_max_tokens(false));
+        assert!(fleet_max_tokens(true) > fleet_max_tokens(false));
+    }
+
+    #[test]
+    fn clamping_keeps_the_tail_on_a_line_boundary() {
+        let text = "alpha\nbravo\ncharlie\n";
+        assert_eq!(clamp_transcript(text, 1000), text);
+        let cut = clamp_transcript(text, 10);
+        assert!(text.ends_with(cut));
+        assert!(!cut.starts_with("ravo"), "cut mid-token: {cut:?}");
+    }
+}
