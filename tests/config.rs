@@ -147,6 +147,26 @@ fn an_empty_key_file_yields_none() {
 }
 
 #[test]
+fn the_dotfile_key_is_not_sent_to_a_foreign_origin() {
+    // Mirrors `provider_resolution::a_vendor_key_is_not_sent_to_a_foreign_origin`,
+    // which only exercises the env-var credential. The dotfile is the
+    // credential that sits on disk for every existing user without a shell
+    // export, and it must clear the same origin gate.
+    let tmp = tempdir();
+    std::fs::write(tmp.join(".openrouter-key"), "sk-from-file\n").unwrap();
+    assert!(
+        resolve_api_key(
+            ProviderId::Openrouter,
+            "http://elsewhere.test/v1",
+            &env_from(&[]),
+            &tmp
+        )
+        .is_none(),
+        "the dotfile key leaked to an overridden origin"
+    );
+}
+
+#[test]
 fn the_no_key_message_names_the_bare_variable_when_none_was_ever_set() {
     use herdash::config::summaries_status;
     use herdash::summary::provider::{Dialect, ResolvedProvider};
