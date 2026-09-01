@@ -227,7 +227,7 @@ OpenRouter specifically.
 | --- | --- |
 | `could not reach herdr at …` | The server is not running. `herdr status server`, or start it with `herdr server`. herdash exits before touching the terminal, so nothing is left in a broken state. |
 | `⟳ reconnecting` in the header | The socket is unreachable. The last known state stays on screen and polling retries automatically. |
-| `summaries off (no key)` | No key found for the selected provider — its own env var (`$OPENROUTER_API_KEY` by default), or `~/.openrouter-key` for OpenRouter. |
+| `summaries off (no key: $OPENROUTER_API_KEY)` (variable named depends on `--provider`) | No key found for the selected provider — its own env var, or `~/.openrouter-key` for OpenRouter. |
 | `summaries off` | You passed `--no-summaries`. |
 | `⚠ summary unavailable` on one agent | That agent's summary failed; the last successful one stays on screen beneath the error. Retries follow a 5s → 15s → 45s → 135s → 5m backoff. `r` forces an immediate retry. |
 | `herdr: …` notice in the header | herdr answered but not usefully — a protocol mismatch, say. Polling continues on the same schedule. |

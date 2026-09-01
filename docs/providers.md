@@ -39,8 +39,11 @@ export OPENAI_API_KEY=sk-...
 herdash --provider openai --model gpt-5-mini
 ```
 
-herdash sends `max_completion_tokens` rather than `max_tokens` and omits
-`temperature`, because gpt-5, the o-series and gpt-4.1 reject both.
+herdash sends `max_completion_tokens` rather than `max_tokens`, because
+gpt-5, the o-series and gpt-4.1 all reject `max_tokens`. It also omits
+`temperature` for this provider entirely: only the o-series actually rejects
+it (any value but `1`), but sending it to some models and not others is more
+surface than it's worth, so herdash leaves it out dialect-wide.
 
 ## Claude platform
 
