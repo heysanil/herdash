@@ -66,7 +66,7 @@ These cost real debugging time. Do not rediscover them.
 - `params` is required on every request, even when empty (`{}`).
 - Inspect the live API with `herdr api schema --json` and `herdr api snapshot`.
 
-## OpenRouter gotchas
+## LLM provider gotchas
 
 - **Reasoning must be negotiated, not assumed.** Summarization is extraction,
   so chain-of-thought buys nothing and costs a lot. But no single setting works
@@ -78,8 +78,48 @@ These cost real debugging time. Do not rediscover them.
   endpoint". `ReasoningMode` starts at `Disabled` and escalates only on an
   explicit refusal, caching the result. Do not hardcode one mode.
 - **Model choice is measured, not assumed.** `docs/benchmark.md` scores seven
-  models on cost, latency, prose quality and attention accuracy. Re-run
-  `examples/bench.rs` before changing the default.
+  OpenRouter-routed models on cost, latency, prose quality and attention
+  accuracy. Re-run `examples/bench.rs` before changing the default.
+- **OpenAI direct rejects `max_tokens`.** gpt-5, the o-series and gpt-4.1 all
+  return "Unsupported parameter" for it; herdash sends `max_completion_tokens`
+  unconditionally for that dialect. The o-series also rejects any
+  `temperature` but `1`, so `Dialect::OpenAiDirect` omits the field rather than
+  pin it.
+- **Sampling parameters are gone on current Claude models.** `temperature`,
+  `top_p` and `top_k` were removed, not deprecated — sending one is a 400. The
+  Anthropic codec never sends them.
+- **The Anthropic wire has its own auth and versioning.** Requests carry
+  `x-api-key` instead of a bearer token, and `anthropic-version` is required
+  on every call, not just on first use. Structured output rides
+  `output_config.format`, which is GA — not a beta header. Reasoning support
+  under it is inconsistent, though: `thinking: {type: "disabled"}` is accepted
+  on Opus 5 / Sonnet 5 / Opus 4.7-4.8 but rejected on Fable 5, while
+  `output_config.effort` is rejected on Haiku 4.5 and Sonnet 4.5. The ladder
+  exists to negotiate between the two rather than assume either.
+- **Ollama Cloud accepts `json_schema` without enforcing it.** Self-hosted
+  Ollama 0.5.0+ makes the schema a hard constraint via llama.cpp's
+  grammar-constrained decoder; the cloud service parses the same field and
+  silently ignores it, so a cloud model can return prose that fails
+  `parse_agent_response` with "model did not return the requested schema".
+  This only reproduces against Ollama Cloud — a local pull will not catch it.
+- **Dialect, not wire, is the unit of variation.** `OpenRouter`, `OpenAiDirect`
+  and `OpenAiGeneric` all speak `Wire::OpenAi`, yet disagree on the token-cap
+  field, whether `temperature` is accepted, and how reasoning is expressed —
+  none of which the wire itself specifies. Add a new OpenAI-wire vendor by
+  extending `Dialect`, never by branching on `Wire`.
+- **Rung advancement must use `fetch_max`, never `store`.** Up to
+  `MAX_SUMMARY_TASKS` (six) workers share one cached rung behind an atomic. A
+  worker that started at a low rung, was refused, and returns after another
+  worker already escalated past it must not overwrite that progress — a plain
+  `store` lets a stale rejection lower the rung and the ladder oscillates,
+  re-paying for a refused call on every lap.
+- **Token budgets must follow the rung.** Reasoning tokens are billed against
+  the same output cap as the answer, so a budget sized for
+  reasoning-disabled gets consumed entirely by thinking the moment a dialect
+  starts above `Disabled` — the empty-body-with-`finish_reason: "length"`
+  failure this whole ladder exists to avoid. `agent_max_tokens` and
+  `fleet_max_tokens` take `reasons: bool` for exactly this reason; do not pass
+  a fixed cap.
 
 ## Design rules
 

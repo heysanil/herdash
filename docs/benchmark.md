@@ -1,5 +1,10 @@
 # Summarization model benchmark
 
+> **Scope:** these figures describe models routed through **OpenRouter**.
+> They are not claims about the same model served by another provider, whose
+> routing, quantization and reasoning defaults differ. See
+> [providers.md](providers.md).
+
 herdash sends one structured-output request per agent summary. This measures
 which model to send it to.
 
