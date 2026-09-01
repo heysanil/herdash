@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.2.0 — 2026-09-01
+
+### Added
+
+- support any OpenAI v1 or Anthropic-compatible LLM endpoint (#1)
+- name herdash's space in herdr with no user configuration
+- name herdash in herdr's space sidebar via a metadata token
+
+
 ## v0.1.0 — 2026-08-31
 
 ### Added
