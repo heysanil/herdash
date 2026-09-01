@@ -60,6 +60,15 @@ pub struct Cli {
     /// Do not publish a `$herdash` token to herdr's sidebar.
     #[arg(long)]
     pub no_sidebar_token: bool,
+
+    /// Name to give herdash's herdr space while it runs. The previous name is
+    /// restored on exit.
+    #[arg(long, default_value = "herdash")]
+    pub space_name: String,
+
+    /// Leave the herdr space name alone.
+    #[arg(long)]
+    pub no_rename_space: bool,
 }
 
 /// The user's home directory, falling back to `.` if it cannot be determined.
@@ -123,6 +132,12 @@ pub struct Settings {
     /// The herdr workspace this process runs in, from `$HERDR_WORKSPACE_ID`.
     /// `None` when herdash is not running inside a herdr pane.
     pub workspace_id: Option<String>,
+    /// Name to apply to that space, or `None` to leave it alone.
+    pub space_name: Option<String>,
+    /// Crash-recovery state for space renames.
+    pub state_path: PathBuf,
+    /// Whether to publish the `$herdash` metadata token as well.
+    pub publish_token: bool,
 }
 
 impl Settings {
@@ -151,15 +166,18 @@ impl Settings {
             cooldown: Duration::from_secs(cli.cooldown),
             lines: cli.lines,
             mouse: !cli.no_mouse,
-            workspace_id: if cli.no_sidebar_token {
+            // herdr injects this into every managed pane; its absence simply
+            // means there is no sidebar to talk to.
+            workspace_id: std::env::var("HERDR_WORKSPACE_ID")
+                .ok()
+                .filter(|s| !s.is_empty()),
+            space_name: if cli.no_rename_space || cli.space_name.trim().is_empty() {
                 None
             } else {
-                // herdr injects this into every managed pane; its absence
-                // simply means there is no sidebar to report to.
-                std::env::var("HERDR_WORKSPACE_ID")
-                    .ok()
-                    .filter(|s| !s.is_empty())
+                Some(cli.space_name.clone())
             },
+            state_path: crate::space::state_path(&home),
+            publish_token: !cli.no_sidebar_token,
             palette: match cli.theme {
                 ThemeSource::Ansi => crate::ui::palette::Palette::default(),
                 ThemeSource::Auto => crate::ui::palette::Palette::from_herdr_config(
@@ -167,6 +185,11 @@ impl Settings {
                 ),
             },
         }
+    }
+
+    /// Whether to publish the `$herdash` sidebar metadata token.
+    pub fn sidebar_token(&self) -> bool {
+        self.publish_token
     }
 
     /// Summaries run only when a key resolved and `--no-summaries` was absent.

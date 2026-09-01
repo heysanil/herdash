@@ -314,6 +314,37 @@ impl Client {
         Ok(env.read)
     }
 
+    /// The current display label of a space.
+    pub async fn workspace_label(&self, workspace_id: &str) -> Result<String> {
+        #[derive(serde::Deserialize)]
+        struct Envelope {
+            workspace: Inner,
+        }
+        #[derive(serde::Deserialize)]
+        struct Inner {
+            #[serde(default)]
+            label: String,
+        }
+        let env: Envelope = self
+            .request("workspace.get", json!({ "workspace_id": workspace_id }))
+            .await?;
+        Ok(env.workspace.label)
+    }
+
+    /// Rename a space.
+    ///
+    /// There is no "reset to derived" — an empty label sets an empty label, so
+    /// the caller must remember the previous string to restore it.
+    pub async fn rename_workspace(&self, workspace_id: &str, label: &str) -> Result<()> {
+        let _: serde_json::Value = self
+            .request(
+                "workspace.rename",
+                json!({ "workspace_id": workspace_id, "label": label }),
+            )
+            .await?;
+        Ok(())
+    }
+
     /// Publish a metadata token onto the workspace herdash runs in.
     ///
     /// herdr's sidebar renders "spaces" from a row template, and

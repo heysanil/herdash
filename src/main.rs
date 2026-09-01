@@ -23,6 +23,7 @@ use herdash::config::{Cli, Settings};
 use herdash::herdr::client::Client;
 use herdash::herdr::types::Snapshot;
 use herdash::orchestrator::{self, FLEET_COOLDOWN, FleetJob, FleetRequest, SummaryJob, Update};
+use herdash::space::{self, Claims};
 use herdash::summary::Summarizer;
 use herdash::summary::openrouter::OpenRouter;
 use herdash::summary::policy::Cfg;
@@ -118,7 +119,9 @@ async fn run(
     ));
 
     // Name this space in herdr's sidebar for as long as herdash is running.
-    if let Some(workspace) = settings.workspace_id.clone() {
+    if settings.publish_token
+        && let Some(workspace) = settings.workspace_id.clone()
+    {
         tokio::spawn(publish_sidebar_token(client.clone(), workspace));
     }
 
@@ -126,6 +129,8 @@ async fn run(
         .api_key
         .clone()
         .map(|key| Arc::new(OpenRouter::new(key, settings.model.clone())) as Arc<dyn Summarizer>);
+
+    claim_space(&client, &settings).await;
 
     let mut app = App::new(settings.summaries);
     app.apply_snapshot(&initial);
@@ -198,6 +203,8 @@ async fn run(
             }
         }
     }
+    release_space(&client, &settings).await;
+
     // Best-effort: drop the sidebar token on a clean exit rather than making
     // the user wait out the TTL. The TTL remains the backstop for a hard kill.
     if let Some(workspace) = settings.workspace_id.as_deref() {
@@ -342,4 +349,51 @@ async fn summarize_fleet(
             result,
         })
         .await;
+}
+
+/// Rename herdash's space so it is identifiable in herdr's sidebar with no
+/// user configuration, remembering the previous name so it can be restored.
+///
+/// Any leftover claim is released first, which is how a herdash that was
+/// killed rather than closed gets cleaned up on the next run.
+async fn claim_space(client: &Client, settings: &Settings) {
+    let (Some(workspace), Some(name)) = (
+        settings.workspace_id.as_deref(),
+        settings.space_name.as_deref(),
+    ) else {
+        return;
+    };
+
+    release_space(client, settings).await;
+
+    let Ok(current) = client.workspace_label(workspace).await else {
+        return;
+    };
+    // Another herdash already owns this space; leave its claim intact.
+    if current == name {
+        return;
+    }
+    if client.rename_workspace(workspace, name).await.is_err() {
+        return;
+    }
+    let mut claims = Claims::load(&settings.state_path);
+    claims.claim(workspace, name, &current);
+    let _ = claims.save(&settings.state_path);
+}
+
+/// Put the previous space name back, if herdash's name is still the one on it.
+async fn release_space(client: &Client, settings: &Settings) {
+    let Some(workspace) = settings.workspace_id.as_deref() else {
+        return;
+    };
+    let mut claims = Claims::load(&settings.state_path);
+    let Some(claim) = claims.release(workspace) else {
+        return;
+    };
+    if let Ok(current) = client.workspace_label(workspace).await
+        && let Some(target) = space::restore_target(&claim, &current)
+    {
+        let _ = client.rename_workspace(workspace, &target).await;
+    }
+    let _ = claims.save(&settings.state_path);
 }

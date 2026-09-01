@@ -108,25 +108,42 @@ if you would rather keep your terminal's own text selection.
 
 ### Showing herdash in herdr's sidebar
 
-While it runs, herdash publishes a `$herdash` metadata token onto the herdr
-space it lives in. Add that token to your space rows in
-`~/.config/herdr/config.toml` and the sidebar labels the space running herdash,
-alongside the repo and branch it already shows:
+herdash names its own herdr space, so it is identifiable in the sidebar with
+**no configuration**:
+
+```
+ ▸ acme-core        main ✓
+ ▸ herdash                        ← the space herdash is running in
+ ▸ widget           feat/x ±
+```
+
+The previous name is restored when herdash exits. If it is killed rather than
+closed, the next run notices the stale rename and puts the old name back before
+claiming it again — the original is recorded in
+`~/.local/state/herdash/spaces.json`, not inferred. If you rename the space
+yourself while herdash is running, your name wins and is left alone.
+
+```sh
+herdash --space-name "fleet"   # use a different name
+herdash --no-rename-space      # leave the space name alone
+```
+
+Renaming is used because it is the only thing herdr renders without user
+configuration: a space row is `state_icon, workspace, branch, git_status`, and
+of those only the label can be set by a program.
+
+If you would rather not have the name replaced, herdash also publishes a
+`$herdash` metadata token, which you can place anywhere in your own space row
+template:
 
 ```toml
 [ui.sidebar.spaces]
 rows = [["state_icon", "workspace"], ["branch", "git_status", "$herdash"]]
 ```
 
-Reload with `herdr server reload-config`. Pass `--no-sidebar-token` to publish
-nothing.
-
-This uses herdr's metadata mechanism rather than `workspace.rename` on purpose.
-A rename would relabel the **whole space**, including any neighbouring agent
-panes in it, and there is no way to restore the previous label automatically.
-The token is scoped to herdash and carries a 30-second TTL that herdr expires
-on its own, so a herdash that is killed rather than closed still disappears
-from the sidebar without leaving anything behind.
+Then `herdash --no-rename-space` keeps the repo name and shows herdash beside
+it. The token carries a 30-second TTL that herdr expires on its own, so it
+needs no cleanup. `--no-sidebar-token` disables it.
 
 ### Colors
 
