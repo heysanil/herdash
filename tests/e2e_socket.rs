@@ -3,8 +3,8 @@
 //! without a herdr installation.
 
 use std::path::PathBuf;
-use std::time::Duration;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Duration;
 
 use herdash::herdr::client::Client;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -299,7 +299,10 @@ async fn the_sidebar_token_is_published_with_a_ttl() {
     let sent: serde_json::Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
     assert_eq!(sent["method"], "workspace.report_metadata");
     assert_eq!(sent["params"]["workspace_id"], "w1");
-    assert_eq!(sent["params"]["source"], "herdash", "attributed, so herdr can scope it");
+    assert_eq!(
+        sent["params"]["source"], "herdash",
+        "attributed, so herdr can scope it"
+    );
     assert_eq!(sent["params"]["tokens"]["herdash"], "herdash");
     assert_eq!(sent["params"]["ttl_ms"], 30_000);
     let _ = std::fs::remove_file(&path);

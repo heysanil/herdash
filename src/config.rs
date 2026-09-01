@@ -156,7 +156,9 @@ impl Settings {
             } else {
                 // herdr injects this into every managed pane; its absence
                 // simply means there is no sidebar to report to.
-                std::env::var("HERDR_WORKSPACE_ID").ok().filter(|s| !s.is_empty())
+                std::env::var("HERDR_WORKSPACE_ID")
+                    .ok()
+                    .filter(|s| !s.is_empty())
             },
             palette: match cli.theme {
                 ThemeSource::Ansi => crate::ui::palette::Palette::default(),
