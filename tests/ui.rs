@@ -400,7 +400,23 @@ fn the_detail_pane_explains_itself_before_a_summary_arrives() {
 fn the_detail_pane_explains_when_summaries_are_off() {
     let mut a = App::new(SummariesMode::OffNoKey);
     a.apply_snapshot(&fixture());
-    assert!(render(&a, 140, 40).contains("Summaries are off"));
+    let text = render(&a, 140, 40);
+    assert!(text.contains("Summaries are off"), "{text}");
+    // A missing key is fixed by configuring a provider, not by dropping a
+    // flag the user never passed.
+    assert!(text.contains("--provider"), "{text}");
+}
+
+#[test]
+fn the_detail_pane_tells_a_deliberate_opt_out_to_drop_the_flag() {
+    let mut a = App::new(SummariesMode::OffByFlag);
+    a.apply_snapshot(&fixture());
+    let text = render(&a, 140, 40);
+    assert!(text.contains("Summaries are off"), "{text}");
+    // They turned this off on purpose, so the fix is dropping the flag —
+    // not being told to configure a provider they may already have.
+    assert!(text.contains("--no-summaries"), "{text}");
+    assert!(!text.contains("--provider"), "{text}");
 }
 
 #[test]
@@ -585,4 +601,14 @@ fn the_header_names_the_variable_it_looked_for() {
     let text = render(&a, 140, 40);
     assert!(text.contains("summaries off"), "{text}");
     assert!(text.contains("ANTHROPIC_API_KEY"), "{text}");
+}
+
+#[test]
+fn the_header_still_claims_locality_without_a_provider_name() {
+    // No detail attached — the egress claim must not silently vanish.
+    let mut a = App::new(SummariesMode::OnLocal);
+    a.apply_snapshot(&fixture());
+    let text = render(&a, 140, 40);
+    assert!(text.contains("summaries on"), "{text}");
+    assert!(text.contains("local"), "{text}");
 }

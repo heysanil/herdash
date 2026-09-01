@@ -47,6 +47,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     // need no provider name, so `tests/app.rs`'s assertions still hold.
     let annotation = match (app.summaries, app.summaries_detail.as_deref()) {
         (SummariesMode::OnLocal, Some(p)) => Some(format!("summaries on · {p} (local)")),
+        // Without a provider name there is still something worth saying: the
+        // transcripts are not leaving the machine.
+        (SummariesMode::OnLocal, None) => Some("summaries on · local".to_string()),
         (SummariesMode::OffNoKey, Some(v)) => Some(format!("summaries off (no key: {v})")),
         (mode, _) => mode.note().map(str::to_string),
     };
