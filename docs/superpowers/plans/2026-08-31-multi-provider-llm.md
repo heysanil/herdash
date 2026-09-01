@@ -105,7 +105,7 @@ async fn concurrent_calls_converge_on_one_rung() {
 - [ ] **Step 2: Run the tests to verify they fail**
 
 ```bash
-mise run test -- --test reasoning_escalation concurrent_calls_converge_on_one_rung
+mise exec -- cargo test --test reasoning_escalation concurrent_calls_converge_on_one_rung
 ```
 
 Expected: FAIL or flake — `set_reasoning_mode` uses `store`, so a late rejection lowers the cached rung and a refused mode is re-sent. Run it a few times; the failure is a race.
@@ -242,7 +242,7 @@ mod prompts {
 - [ ] **Step 2: Run the test to verify it fails**
 
 ```bash
-mise run test -- --test summary_parse prompts
+mise exec -- cargo test --test summary_parse prompts
 ```
 
 Expected: FAIL — `herdash::summary::prompts` does not exist.
@@ -561,7 +561,7 @@ fn origin_comparison_ignores_path_and_trailing_slash() {
 - [ ] **Step 2: Run the test to verify it fails**
 
 ```bash
-mise run test -- --test provider
+mise exec -- cargo test --test provider
 ```
 
 Expected: FAIL — `herdash::summary::provider` does not exist.
@@ -899,7 +899,7 @@ In `src/summary/mod.rs`, add `pub mod provider;`.
 - [ ] **Step 5: Run the tests**
 
 ```bash
-mise run test -- --test provider
+mise exec -- cargo test --test provider
 mise run check
 ```
 
@@ -1116,7 +1116,7 @@ fn the_fleet_response_is_trimmed_prose() {
 - [ ] **Step 2: Run the test to verify it fails**
 
 ```bash
-mise run test -- --test openai_codec
+mise exec -- cargo test --test openai_codec
 ```
 
 Expected: FAIL — `herdash::summary::openai` does not exist.
@@ -1279,7 +1279,7 @@ pub fn parse_fleet_response(body: &str) -> Result<String> {
 Add `pub mod openai;` to `src/summary/mod.rs`, then:
 
 ```bash
-mise run test -- --test openai_codec
+mise exec -- cargo test --test openai_codec
 mise run check
 ```
 
@@ -1457,7 +1457,7 @@ fn the_fleet_response_is_trimmed_prose() {
 - [ ] **Step 2: Run the test to verify it fails**
 
 ```bash
-mise run test -- --test anthropic_codec
+mise exec -- cargo test --test anthropic_codec
 ```
 
 Expected: FAIL — `herdash::summary::anthropic` does not exist.
@@ -1598,7 +1598,7 @@ pub fn parse_fleet_response(body: &str) -> Result<String> {
 Add `pub mod anthropic;` to `src/summary/mod.rs`, then:
 
 ```bash
-mise run test -- --test anthropic_codec
+mise exec -- cargo test --test anthropic_codec
 mise run check
 ```
 
@@ -1715,7 +1715,7 @@ fn server_errors_and_rate_limits_are_not_reasoning_refusals() {
 - [ ] **Step 2: Run the test to verify it fails**
 
 ```bash
-mise run test -- --test rejection
+mise exec -- cargo test --test rejection
 ```
 
 Expected: FAIL — `herdash::summary::client` does not exist.
@@ -1933,7 +1933,7 @@ impl Summarizer for LlmClient {
 Add `pub mod client;` to `src/summary/mod.rs`, then:
 
 ```bash
-mise run test -- --test rejection
+mise exec -- cargo test --test rejection
 mise run check
 ```
 
@@ -2240,7 +2240,7 @@ Also update the existing `~/.openrouter-key` tests in this file to call `resolve
 - [ ] **Step 2: Run the test to verify it fails**
 
 ```bash
-mise run test -- --test config provider_resolution
+mise exec -- cargo test --test config provider_resolution
 ```
 
 Expected: FAIL — `resolve_provider` does not exist and `Cli.interval` is not `Option`.
@@ -2382,10 +2382,25 @@ pub fn needs_missing_key(p: &ResolvedProvider) -> bool {
 
 Update `Settings` and `Settings::from_cli` to store `provider: Option<ResolvedProvider>`, apply the `DEFAULT_*` constants to the `Option` fields, and set `summaries` per Task 9's rules. `Settings::from_cli` becomes fallible — return `anyhow::Result<Self>`.
 
+**This task also updates `src/main.rs` enough to keep the build green.** Dropping `Settings::api_key` and `Settings::model` and making `from_cli` fallible both break the stopgap left by Task 7, so Step 4's `mise run check` cannot pass without it:
+
+```rust
+    // in main()
+    let settings = Settings::from_cli(&cli)?;
+
+    // replacing the Task 7 stopgap
+    let summarizer: Option<Arc<dyn Summarizer>> = settings
+        .provider
+        .clone()
+        .map(|p| Arc::new(LlmClient::new(p)) as Arc<dyn Summarizer>);
+```
+
+Task 9 then adds the `summaries_detail` wiring on top.
+
 - [ ] **Step 4: Run the tests**
 
 ```bash
-mise run test -- --test config
+mise exec -- cargo test --test config
 mise run check
 ```
 
@@ -2465,8 +2480,8 @@ fn the_header_names_the_variable_it_looked_for() {
 - [ ] **Step 2: Run to verify failure**
 
 ```bash
-mise run test -- --test app the_summaries_mode_marks
-mise run test -- --test ui the_header_advertises
+mise exec -- cargo test --test app the_summaries_mode_marks
+mise exec -- cargo test --test ui the_header_advertises
 ```
 
 Expected: FAIL — no `OnLocal`, no `with_summaries_detail`.
