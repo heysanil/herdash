@@ -191,6 +191,27 @@ fn a_gateway_base_url_with_a_path_prefix_keeps_its_prefix() {
 }
 
 #[test]
+fn debug_output_redacts_the_api_key() {
+    let p = ResolvedProvider {
+        id: ProviderId::Openai,
+        dialect: preset(ProviderId::Openai).dialect,
+        base_url: "https://api.openai.com/v1".into(),
+        api_key: Some("sk-super-secret".into()),
+        model: "gpt-5-mini".into(),
+    };
+    let debug = format!("{p:?}");
+    assert!(
+        !debug.contains("sk-super-secret"),
+        "the key leaked into Debug output: {debug}"
+    );
+    assert!(debug.contains("<redacted>"), "{debug}");
+
+    // A provider with no key at all must still say so plainly.
+    let none = ResolvedProvider { api_key: None, ..p };
+    assert!(format!("{none:?}").contains("None"));
+}
+
+#[test]
 fn origin_comparison_ignores_path_and_trailing_slash() {
     assert!(same_origin(
         "https://api.openai.com/v1",

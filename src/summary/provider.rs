@@ -230,13 +230,38 @@ pub fn preset(id: ProviderId) -> ProviderPreset {
 }
 
 /// Everything the client needs, with nothing left to resolve.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ResolvedProvider {
     pub id: ProviderId,
     pub dialect: Dialect,
     pub base_url: String,
     pub api_key: Option<String>,
     pub model: String,
+}
+
+/// Manual, not derived: `api_key` must never appear in an error, notice, or
+/// `Debug` output. There is no leak today — nothing formats this struct —
+/// but `Settings` (`config.rs`) holds one and derives `Debug` too, and a
+/// startup diagnostic is exactly the kind of addition someone reaches for
+/// `Settings` to build.
+impl std::fmt::Debug for ResolvedProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        /// Prints as `<redacted>` with no surrounding quotes, so
+        /// `Option<Redacted>` reads as `Some(<redacted>)` / `None`.
+        struct Redacted;
+        impl std::fmt::Debug for Redacted {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "<redacted>")
+            }
+        }
+        f.debug_struct("ResolvedProvider")
+            .field("id", &self.id)
+            .field("dialect", &self.dialect)
+            .field("base_url", &self.base_url)
+            .field("api_key", &self.api_key.as_ref().map(|_| Redacted))
+            .field("model", &self.model)
+            .finish()
+    }
 }
 
 impl ResolvedProvider {
