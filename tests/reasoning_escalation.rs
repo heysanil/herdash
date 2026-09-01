@@ -194,13 +194,16 @@ fn a_late_rejection_never_lowers_the_cached_rung() {
     assert_eq!(cache.load(Ordering::Relaxed), 2);
 }
 
-/// Concurrent calls must converge on one rung and stop re-sending a refused
-/// one.
+/// Six concurrent workers against one client all converge and succeed.
 ///
-/// Six workers share one cached rung. Without monotonic advancement a slow
-/// worker that started at `Disabled`, was refused, and returns after another
-/// worker already reached `ProviderDefault` stores `LowEffort` over it — and
-/// every later call pays for a refused request again, forever.
+/// A liveness check, not a monotonicity check: every worker reads the cached
+/// rung once at call entry, this runtime is single-threaded, and the stub
+/// accepts `effort:low` unconditionally — so the sequence is always six
+/// `disabled` then six `effort:low`, and no worker can return a stale rung
+/// after another has passed it. The monotonic invariant is asserted directly
+/// and deterministically in `a_late_rejection_never_lowers_the_cached_rung`;
+/// this test guards that concurrent escalation over a real socket does not
+/// deadlock or drop a worker.
 #[tokio::test]
 async fn concurrent_calls_converge_on_one_rung() {
     let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
