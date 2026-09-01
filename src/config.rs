@@ -38,6 +38,7 @@ pub struct Cli {
     pub lines: Option<u32>,
 
     /// Backend preset. Sets the wire protocol and a default endpoint.
+    /// [default: openrouter]
     #[arg(long, value_enum)]
     pub provider: Option<ProviderId>,
 
@@ -46,7 +47,7 @@ pub struct Cli {
     #[arg(long)]
     pub base_url: Option<String>,
 
-    /// Model name or slug, interpreted by the provider.
+    /// Model name or slug, interpreted by the provider. [default: per provider; openrouter uses openai/gpt-oss-120b]
     #[arg(long)]
     pub model: Option<String>,
 
