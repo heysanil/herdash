@@ -41,6 +41,20 @@ pub fn is_reasoning_rejection(status: u16, sent_reasoning: bool, message: &str) 
         || m.contains("unrecognized")
 }
 
+/// Advance a cached reasoning rung. **Monotonic on purpose.**
+///
+/// Up to `MAX_SUMMARY_TASKS` workers share one cached rung. A worker that
+/// started at a low rung, was refused, and returns after another worker
+/// already escalated past it must not write its stale rung back — that makes
+/// the ladder oscillate and re-pay for a refused call on every lap. A late
+/// rejection is a no-op instead.
+///
+/// A free function so the invariant is testable without driving a race that
+/// only reproduces under specific interleavings.
+pub fn advance_rung(cache: &std::sync::atomic::AtomicU8, mode: ReasoningMode) {
+    cache.fetch_max(mode.index(), std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Summarizer over any configured provider.
 pub struct LlmClient {
     client: reqwest::Client,
@@ -79,11 +93,9 @@ impl LlmClient {
         ReasoningMode::from_index(self.reasoning.load(std::sync::atomic::Ordering::Relaxed))
     }
 
-    /// Monotonic on purpose — see the note in `openrouter.rs`'s original
-    /// version: a late rejection must never lower the cached rung.
+    /// Monotonic on purpose — see [`advance_rung`].
     fn advance(&self, mode: ReasoningMode) {
-        self.reasoning
-            .fetch_max(mode.index(), std::sync::atomic::Ordering::Relaxed);
+        advance_rung(&self.reasoning, mode);
     }
 
     fn agent_body(&self, transcript: &str, rung: ReasoningMode) -> Value {

@@ -24,8 +24,9 @@ use herdash::herdr::client::Client;
 use herdash::herdr::types::Snapshot;
 use herdash::orchestrator::{self, FLEET_COOLDOWN, FleetJob, FleetRequest, SummaryJob, Update};
 use herdash::summary::Summarizer;
-use herdash::summary::openrouter::OpenRouter;
+use herdash::summary::client::LlmClient;
 use herdash::summary::policy::Cfg;
+use herdash::summary::provider::{ProviderId, ResolvedProvider, preset};
 use herdash::ui;
 
 /// Redraw cadence, so ages and the spinner stay live.
@@ -107,10 +108,21 @@ async fn run(
         tx.clone(),
     ));
 
-    let summarizer: Option<Arc<dyn Summarizer>> = settings
-        .api_key
-        .clone()
-        .map(|key| Arc::new(OpenRouter::new(key, settings.model.clone())) as Arc<dyn Summarizer>);
+    // Stopgap: always OpenRouter until the next task wires up provider
+    // selection from `Settings`.
+    let summarizer: Option<Arc<dyn Summarizer>> = settings.api_key.clone().map(|key| {
+        let openrouter = preset(ProviderId::Openrouter);
+        Arc::new(LlmClient::new(ResolvedProvider {
+            id: ProviderId::Openrouter,
+            dialect: openrouter.dialect,
+            base_url: openrouter
+                .default_base_url
+                .expect("openrouter preset has a default base url")
+                .to_string(),
+            api_key: Some(key),
+            model: settings.model.clone(),
+        })) as Arc<dyn Summarizer>
+    });
 
     let mut app = App::new(settings.summaries);
     app.apply_snapshot(&initial);

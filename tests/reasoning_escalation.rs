@@ -10,9 +10,22 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use herdash::summary::Summarizer;
-use herdash::summary::openrouter::OpenRouter;
+use herdash::summary::client::LlmClient;
+use herdash::summary::provider::{Dialect, ProviderId, ResolvedProvider, preset};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
+
+/// An OpenRouter-shaped provider pointed at a local stub.
+fn stub_provider(endpoint: &str) -> ResolvedProvider {
+    let _ = endpoint; // the URL is applied via with_endpoint
+    ResolvedProvider {
+        id: ProviderId::Openrouter,
+        dialect: preset(ProviderId::Openrouter).dialect,
+        base_url: "http://unused".into(),
+        api_key: Some("k".into()),
+        model: "m".into(),
+    }
+}
 
 /// Minimal HTTP server that records each request's `reasoning` field and
 /// replies according to `behavior`.
@@ -106,7 +119,7 @@ async fn spawn_stub(
 #[tokio::test]
 async fn a_permissive_provider_is_only_ever_asked_for_no_reasoning() {
     let (endpoint, seen, calls) = spawn_stub(false).await;
-    let client = OpenRouter::new("k".into(), "m".into()).with_endpoint(endpoint);
+    let client = LlmClient::new(stub_provider(&endpoint)).with_endpoint(endpoint);
 
     client.summarize_agent("transcript").await.unwrap();
     client.summarize_agent("transcript").await.unwrap();
@@ -120,7 +133,7 @@ async fn a_permissive_provider_is_only_ever_asked_for_no_reasoning() {
 #[tokio::test]
 async fn a_provider_that_mandates_reasoning_is_retried_with_low_effort() {
     let (endpoint, seen, _calls) = spawn_stub(true).await;
-    let client = OpenRouter::new("k".into(), "m".into()).with_endpoint(endpoint);
+    let client = LlmClient::new(stub_provider(&endpoint)).with_endpoint(endpoint);
 
     let summary = client
         .summarize_agent("transcript")
@@ -138,7 +151,7 @@ async fn a_provider_that_mandates_reasoning_is_retried_with_low_effort() {
 #[tokio::test]
 async fn the_escalated_mode_is_cached_for_later_calls() {
     let (endpoint, seen, calls) = spawn_stub(true).await;
-    let client = OpenRouter::new("k".into(), "m".into()).with_endpoint(endpoint);
+    let client = LlmClient::new(stub_provider(&endpoint)).with_endpoint(endpoint);
 
     client.summarize_agent("one").await.unwrap();
     client.summarize_agent("two").await.unwrap();
@@ -159,9 +172,36 @@ async fn the_escalated_mode_is_cached_for_later_calls() {
 #[tokio::test]
 async fn the_fleet_summary_negotiates_reasoning_too() {
     let (endpoint, seen, _calls) = spawn_stub(true).await;
-    let client = OpenRouter::new("k".into(), "m".into()).with_endpoint(endpoint);
+    let client = LlmClient::new(stub_provider(&endpoint)).with_endpoint(endpoint);
     let _ = client.summarize_fleet(&["a".into(), "b".into()]).await;
     assert_eq!(*seen.lock().unwrap(), vec!["disabled", "effort:low"]);
+}
+
+/// A generic OpenAI-compatible endpoint (e.g. llama.cpp-backed) has no
+/// reasoning knob, so it must start at the dialect's own default rung rather
+/// than probing a lower one first.
+#[tokio::test]
+async fn a_generic_endpoint_starts_at_provider_default() {
+    // llama.cpp-backed servers have no reasoning knob; starting lower only
+    // buys a wasted round trip.
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!(
+        "http://{}/v1/chat/completions",
+        listener.local_addr().unwrap()
+    );
+    tokio::spawn(stub(listener, Arc::clone(&seen), false, Arc::clone(&calls)));
+
+    let mut p = stub_provider(&endpoint);
+    p.id = ProviderId::Ollama;
+    p.dialect = Dialect::OpenAiGeneric;
+    p.api_key = None;
+    let client = LlmClient::new(p).with_endpoint(endpoint);
+    client.summarize_agent("t").await.unwrap();
+
+    assert_eq!(seen.lock().unwrap().as_slice(), ["none"]);
+    assert_eq!(calls.load(Ordering::Relaxed), 1, "no wasted round trip");
 }
 
 /// A stale rejection arriving late must not lower the cached rung.
@@ -171,7 +211,8 @@ async fn the_fleet_summary_negotiates_reasoning_too() {
 /// directly. Swap `fetch_max` back to `store` and this test fails.
 #[test]
 fn a_late_rejection_never_lowers_the_cached_rung() {
-    use herdash::summary::openrouter::{ReasoningMode as M, advance_rung};
+    use herdash::summary::client::advance_rung;
+    use herdash::summary::provider::ReasoningMode as M;
     use std::sync::atomic::{AtomicU8, Ordering};
 
     let cache = AtomicU8::new(0);
@@ -215,7 +256,7 @@ async fn concurrent_calls_converge_on_one_rung() {
     );
     tokio::spawn(stub(listener, Arc::clone(&seen), true, Arc::clone(&calls)));
 
-    let client = Arc::new(OpenRouter::new("k".into(), "m".into()).with_endpoint(endpoint));
+    let client = Arc::new(LlmClient::new(stub_provider(&endpoint)).with_endpoint(endpoint));
     let mut set = tokio::task::JoinSet::new();
     for _ in 0..6 {
         let c = Arc::clone(&client);

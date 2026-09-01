@@ -3,7 +3,6 @@
 pub mod anthropic;
 pub mod client;
 pub mod openai;
-pub mod openrouter;
 pub mod policy;
 pub mod prompts;
 pub mod provider;
@@ -12,6 +11,8 @@ pub mod types;
 use anyhow::Result;
 use async_trait::async_trait;
 
+pub use client::LlmClient;
+pub use provider::{ProviderId, ResolvedProvider};
 pub use types::{AgentSummary, or_dash};
 
 /// Produces summaries. Behind a trait so tests substitute a stub and never
