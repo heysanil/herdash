@@ -354,6 +354,108 @@ async fn the_openai_wire_sends_a_bearer_token_and_no_x_api_key() {
     );
 }
 
+/// Minimal Anthropic-shaped HTTP server that rejects the `thinking:
+/// {"type":"disabled"}` rung with a 400 naming the field, then accepts
+/// whatever the client sends next. Kept separate from [`stub`] (OpenAI-wire)
+/// and [`header_stub`] (never rejects) because driving a genuine Anthropic
+/// refusal needs its own body inspection.
+async fn anthropic_refusal_stub(
+    listener: TcpListener,
+    seen: Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
+) {
+    loop {
+        let Ok((mut socket, _)) = listener.accept().await else {
+            return;
+        };
+        let seen = Arc::clone(&seen);
+        tokio::spawn(async move {
+            let (r, mut w) = socket.split();
+            let mut reader = BufReader::new(r);
+            let mut content_length = 0usize;
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).await.unwrap_or(0) == 0 {
+                    return;
+                }
+                let lower = line.to_ascii_lowercase();
+                if let Some(v) = lower.strip_prefix("content-length:") {
+                    content_length = v.trim().parse().unwrap_or(0);
+                }
+                if line == "\r\n" || line == "\n" {
+                    break;
+                }
+            }
+            let mut body = vec![0u8; content_length];
+            tokio::io::AsyncReadExt::read_exact(&mut reader, &mut body)
+                .await
+                .ok();
+            let json: serde_json::Value =
+                serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
+            seen.lock().unwrap().push(json.clone());
+
+            let rejects_disabled = json["thinking"] == serde_json::json!({"type": "disabled"});
+            let (status, payload) = if rejects_disabled {
+                (
+                    "400 Bad Request",
+                    serde_json::json!({"type":"error","error":{"type":"invalid_request_error",
+                        "message":"thinking.type: disabled is not supported by this model"}}),
+                )
+            } else {
+                (
+                    "200 OK",
+                    serde_json::json!({"stop_reason":"end_turn","content":[{"type":"text","text":
+                        r#"{"headline":"h","task":"t","now":"n","recent":[],"needs_attention":false,"attention_reason":""}"#
+                    }]}),
+                )
+            };
+            let body = payload.to_string();
+            let resp = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = w.write_all(resp.as_bytes()).await;
+            let _ = w.flush().await;
+        });
+    }
+}
+
+/// `sends_reasoning`'s Anthropic branch is only reached from `call()`'s
+/// error path, and every Anthropic test above gets a 200 on the first try —
+/// so that branch never ran, and inverting it (`==` for `!=`) left the whole
+/// suite green. This drives a genuine refusal of `thinking:{"type":
+/// "disabled"}` so the client must actually consult `sends_reasoning` to
+/// recognize the refusal and escalate to `output_config.effort`.
+#[tokio::test]
+async fn an_anthropic_endpoint_that_refuses_disabled_thinking_escalates_to_effort() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}/v1/messages", listener.local_addr().unwrap());
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    tokio::spawn(anthropic_refusal_stub(listener, Arc::clone(&seen)));
+
+    let provider = ResolvedProvider {
+        id: ProviderId::Anthropic,
+        dialect: preset(ProviderId::Anthropic).dialect,
+        base_url: "http://unused".into(),
+        api_key: Some("k".into()),
+        model: "m".into(),
+    };
+    let client = LlmClient::new(provider).with_endpoint(endpoint);
+
+    client
+        .summarize_agent("transcript")
+        .await
+        .expect("must escalate past the refused rung rather than fail");
+
+    let seen = seen.lock().unwrap();
+    assert_eq!(
+        seen.len(),
+        2,
+        "one refused probe, then one escalated request"
+    );
+    assert_eq!(seen[0]["thinking"], serde_json::json!({"type": "disabled"}));
+    assert_eq!(seen[1]["output_config"]["effort"], serde_json::json!("low"));
+}
+
 /// A stale rejection arriving late must not lower the cached rung.
 ///
 /// Deterministic on purpose: the interleaving this guards against does not
