@@ -10,9 +10,9 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use herdash::summary::openrouter::{
-    ReasoningMode, agent_request_body_with, is_reasoning_rejection,
-};
+use herdash::summary::client::is_reasoning_rejection;
+use herdash::summary::openai::{agent_request_body, parse_agent_response, reasoning_field};
+use herdash::summary::provider::{Dialect, ReasoningMode};
 use serde_json::{Value, json};
 
 const MODELS: &[&str] = &[
@@ -114,7 +114,7 @@ async fn one_call(
     let mut attempts = 0u32;
     loop {
         attempts += 1;
-        let body = agent_request_body_with(model, text, mode);
+        let body = agent_request_body(Dialect::OpenRouter, model, text, mode);
         let started = Instant::now();
         let resp = client
             .post(ENDPOINT)
@@ -160,7 +160,8 @@ async fn one_call(
                 .get("message")
                 .and_then(|m| m.as_str())
                 .unwrap_or("error");
-            if is_reasoning_rejection(message)
+            let sent_reasoning = reasoning_field(Dialect::OpenRouter, mode).is_some();
+            if is_reasoning_rejection(status, sent_reasoning, message)
                 && let Some(next) = mode.escalate()
             {
                 mode = next;
@@ -194,7 +195,7 @@ async fn one_call(
         rec["raw"] = json!(content);
 
         // Compliance is judged by the shipped parser, not a looser one.
-        match herdash::summary::openrouter::parse_agent_response(&text_body) {
+        match parse_agent_response(&text_body) {
             Ok(summary) => {
                 rec["ok"] = json!(true);
                 rec["summary"] = serde_json::to_value(&summary).unwrap();

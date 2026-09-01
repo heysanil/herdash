@@ -1,10 +1,11 @@
 //! Structured-output parsing, sanitization and transcript clamping.
 
 use herdash::summary::AgentSummary;
-use herdash::summary::openrouter::{
-    TRANSCRIPT_MAX_BYTES, agent_request_body, clamp_transcript, fleet_request_body,
-    parse_agent_response, parse_fleet_response,
+use herdash::summary::openai::{
+    agent_request_body, fleet_request_body, parse_agent_response, parse_fleet_response,
 };
+use herdash::summary::prompts::{TRANSCRIPT_MAX_BYTES, clamp_transcript};
+use herdash::summary::provider::{Dialect, ReasoningMode};
 use herdash::summary::types::{DASH, or_dash, truncate_chars};
 
 fn wrap(content: &str) -> String {
@@ -142,7 +143,12 @@ fn clamping_a_transcript_with_no_newlines_still_returns_the_tail() {
 
 #[test]
 fn the_request_body_demands_strict_structured_output() {
-    let b = agent_request_body("meta-llama/llama-4-scout:nitro", "transcript here");
+    let b = agent_request_body(
+        Dialect::OpenRouter,
+        "meta-llama/llama-4-scout:nitro",
+        "transcript here",
+        ReasoningMode::Disabled,
+    );
     assert_eq!(b["model"], "meta-llama/llama-4-scout:nitro");
     assert_eq!(b["response_format"]["type"], "json_schema");
     assert_eq!(b["response_format"]["json_schema"]["strict"], true);
@@ -162,7 +168,12 @@ fn the_request_body_demands_strict_structured_output() {
 
 #[test]
 fn the_fleet_request_carries_every_headline_and_no_schema() {
-    let b = fleet_request_body("m", &["one".to_string(), "two".to_string()]);
+    let b = fleet_request_body(
+        Dialect::OpenRouter,
+        "m",
+        &["one".to_string(), "two".to_string()],
+        ReasoningMode::Disabled,
+    );
     let user = b["messages"][1]["content"].as_str().unwrap();
     assert!(user.contains("one") && user.contains("two"));
     assert!(
@@ -206,7 +217,7 @@ fn a_stub_summarizer_satisfies_the_trait() {
 
 #[test]
 fn the_schema_requires_the_attention_classification() {
-    let b = agent_request_body("m", "t");
+    let b = agent_request_body(Dialect::OpenRouter, "m", "t", ReasoningMode::Disabled);
     let schema = &b["response_format"]["json_schema"]["schema"];
     let required = schema["required"].as_array().unwrap();
     for field in [
@@ -269,7 +280,7 @@ fn a_response_without_attention_fields_defaults_to_no_attention() {
 
 #[test]
 fn reasoning_modes_escalate_in_cost_order() {
-    use herdash::summary::openrouter::ReasoningMode as M;
+    use herdash::summary::provider::ReasoningMode as M;
     assert_eq!(M::Disabled.escalate(), Some(M::LowEffort));
     assert_eq!(M::LowEffort.escalate(), Some(M::ProviderDefault));
     assert_eq!(M::ProviderDefault.escalate(), None, "nothing left to try");
@@ -277,42 +288,80 @@ fn reasoning_modes_escalate_in_cost_order() {
 
 #[test]
 fn the_default_body_asks_for_no_reasoning() {
-    let b = agent_request_body("m", "t");
+    let b = agent_request_body(Dialect::OpenRouter, "m", "t", ReasoningMode::Disabled);
     assert_eq!(b["reasoning"]["enabled"], false);
 }
 
 #[test]
 fn each_reasoning_mode_produces_the_right_field() {
-    use herdash::summary::openrouter::{ReasoningMode as M, agent_request_body_with};
+    use herdash::summary::provider::ReasoningMode as M;
     assert_eq!(
-        agent_request_body_with("m", "t", M::Disabled)["reasoning"]["enabled"],
+        agent_request_body(Dialect::OpenRouter, "m", "t", M::Disabled)["reasoning"]["enabled"],
         false
     );
     assert_eq!(
-        agent_request_body_with("m", "t", M::LowEffort)["reasoning"]["effort"],
+        agent_request_body(Dialect::OpenRouter, "m", "t", M::LowEffort)["reasoning"]["effort"],
         "low"
     );
     assert!(
-        agent_request_body_with("m", "t", M::ProviderDefault)
+        agent_request_body(Dialect::OpenRouter, "m", "t", M::ProviderDefault)
             .get("reasoning")
             .is_none(),
         "the default sends no field at all"
     );
 }
 
-/// Only a provider refusing the mode should trigger escalation — a rate limit
-/// or a schema error must surface as a real failure.
-#[test]
-fn only_reasoning_refusals_are_treated_as_escalation_signals() {
-    use herdash::summary::openrouter::is_reasoning_rejection;
-    assert!(is_reasoning_rejection(
-        "Reasoning is mandatory for this endpoint and cannot be disabled."
-    ));
-    assert!(is_reasoning_rejection(
-        "reasoning cannot be disabled for this model"
-    ));
-    assert!(!is_reasoning_rejection("rate limited"));
-    assert!(!is_reasoning_rejection(
-        "model did not return the requested schema"
-    ));
+mod prompts {
+    use herdash::summary::prompts::{
+        agent_max_tokens, clamp_transcript, fleet_max_tokens, summary_schema,
+    };
+
+    #[test]
+    fn the_schema_is_bare_with_no_vendor_wrapper() {
+        let s = summary_schema();
+        assert_eq!(s["type"], "object");
+        assert_eq!(s["additionalProperties"], false);
+        for field in [
+            "headline",
+            "task",
+            "now",
+            "recent",
+            "needs_attention",
+            "attention_reason",
+        ] {
+            assert!(
+                s["properties"].get(field).is_some(),
+                "schema is missing {field}"
+            );
+            assert!(
+                s["required"].as_array().unwrap().iter().any(|r| r == field),
+                "{field} is not required"
+            );
+        }
+        // OpenAI wraps this in `json_schema.name`/`strict`; Anthropic does not.
+        // Neither wrapper belongs in the shared schema itself.
+        assert!(s.get("name").is_none());
+        assert!(s.get("strict").is_none());
+    }
+
+    #[test]
+    fn budgets_leave_room_for_reasoning_tokens() {
+        // Reasoning tokens are billed against the same output budget. The
+        // 200-token fleet cap tuned for reasoning-disabled would otherwise be
+        // consumed entirely by reasoning, returning empty content with
+        // finish_reason "length" — a call you still pay for.
+        assert_eq!(agent_max_tokens(false), 900);
+        assert_eq!(fleet_max_tokens(false), 200);
+        assert!(agent_max_tokens(true) > agent_max_tokens(false));
+        assert!(fleet_max_tokens(true) > fleet_max_tokens(false));
+    }
+
+    #[test]
+    fn clamping_keeps_the_tail_on_a_line_boundary() {
+        let text = "alpha\nbravo\ncharlie\n";
+        assert_eq!(clamp_transcript(text, 1000), text);
+        let cut = clamp_transcript(text, 10);
+        assert!(text.ends_with(cut));
+        assert!(!cut.starts_with("ravo"), "cut mid-token: {cut:?}");
+    }
 }

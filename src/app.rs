@@ -29,6 +29,9 @@ pub struct SummarySlot {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SummariesMode {
     On,
+    /// Running against a loopback endpoint — transcripts never leave the
+    /// machine. Kept distinct from `On` so the header can say so.
+    OnLocal,
     /// No API key resolved.
     OffNoKey,
     /// `--no-summaries` was passed.
@@ -37,13 +40,13 @@ pub enum SummariesMode {
 
 impl SummariesMode {
     pub fn enabled(self) -> bool {
-        matches!(self, Self::On)
+        matches!(self, Self::On | Self::OnLocal)
     }
 
     /// Header annotation, or `None` when summaries are running.
     pub fn note(self) -> Option<&'static str> {
         match self {
-            Self::On => None,
+            Self::On | Self::OnLocal => None,
             Self::OffNoKey => Some("summaries off (no key)"),
             Self::OffByFlag => Some("summaries off"),
         }
@@ -94,6 +97,10 @@ pub struct App {
     pub detail_open: bool,
     pub conn: ConnState,
     pub summaries: SummariesMode,
+    /// Provider name, or the variable a missing key was looked for in.
+    /// Owned because it names a specific provider, unlike the `&'static str`
+    /// notes above.
+    pub summaries_detail: Option<String>,
     pub should_quit: bool,
     /// Redraw counter, used to animate the in-flight indicator. Incremented
     /// by the event loop so rendering stays a pure function of state.
@@ -121,12 +128,19 @@ impl App {
             detail_open: false,
             conn: ConnState::Connected,
             summaries,
+            summaries_detail: None,
             should_quit: false,
             tick: 0,
             notice: None,
             timings: Timings::new(),
             last_snapshot: None,
         }
+    }
+
+    /// Attach the provider detail rendered beside the summaries state.
+    pub fn with_summaries_detail(mut self, detail: String) -> Self {
+        self.summaries_detail = Some(detail);
+        self
     }
 
     /// Fold in a fresh snapshot: advance ages, rebuild groups, prune dead

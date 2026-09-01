@@ -42,8 +42,11 @@ it is doing now, and what it recently finished.
 - [mise](https://mise.jdx.dev). The crate needs Rust ≥ 1.88 and edition 2024
   (ratatui 0.30's floor); `mise.toml` pins 1.98, which is what CI and the
   contributor workflow assume.
-- An OpenRouter API key, **optional**: without one herdash runs as a pure
-  status board. See [Privacy](#privacy).
+- An API key for whichever provider you use, **optional**: without one
+  herdash runs as a pure status board. OpenRouter is the default; see
+  [docs/providers.md](docs/providers.md) for OpenAI, the Claude platform,
+  local models via Ollama or LM Studio, and any other compatible endpoint.
+  See also [Privacy](#privacy).
 
 ## Install
 
@@ -82,7 +85,9 @@ herdash --cooldown 90        # summarize a given agent at most every 90s
 | --- | --- | --- |
 | `--interval <secs>` | `1` | Seconds between herdr snapshot polls |
 | `--cooldown <secs>` | `45` | Minimum seconds between summaries for one agent |
-| `--model <slug>` | `openai/gpt-oss-120b` | OpenRouter model — see [benchmark](docs/benchmark.md) |
+| `--provider <id>` | `openrouter` | Backend preset — see [docs/providers.md](docs/providers.md) |
+| `--base-url <url>` | per provider | Override the provider's endpoint — see [docs/providers.md](docs/providers.md) |
+| `--model <slug>` | per provider | Model name or slug — see [docs/providers.md](docs/providers.md) |
 | `--lines <n>` | `200` | Transcript lines requested per agent |
 | `--no-summaries` | off | Pure status board, no external network egress |
 | `--socket <path>` | `$HERDR_SOCKET_PATH`, else `~/.config/herdr/herdr.sock` | herdr socket |
@@ -239,14 +244,21 @@ attention accuracy and plainer writing.
 ## Privacy
 
 **Summarization sends your agents' terminal transcripts — which contain your
-source code and file contents — to OpenRouter, and on to whichever provider it
-routes to.**
+source code and file contents — to whichever provider `--provider` is set to**
+(OpenRouter by default), and on to whichever model it routes to.
 
 If that is not acceptable, `--no-summaries` gives you the full status board
 with zero external network egress, as does simply not configuring a key. The
 header tells you which mode you are in.
 
-The API key is read from `$OPENROUTER_API_KEY`, then `~/.openrouter-key`.
+A local provider gives you full summaries instead of a bare status board,
+with the same zero-egress guarantee: `--provider ollama` or `--provider
+lmstudio` keeps transcripts on this machine, and the header shows
+`summaries on · ollama (local)`. See [docs/providers.md](docs/providers.md).
+
+The API key is read from `$HERDASH_API_KEY`, then the selected provider's own
+variable (`$OPENROUTER_API_KEY` by default), then `~/.openrouter-key` for
+OpenRouter specifically.
 
 ## Troubleshooting
 
@@ -254,10 +266,14 @@ The API key is read from `$OPENROUTER_API_KEY`, then `~/.openrouter-key`.
 | --- | --- |
 | `could not reach herdr at …` | The server is not running. `herdr status server`, or start it with `herdr server`. herdash exits before touching the terminal, so nothing is left in a broken state. |
 | `⟳ reconnecting` in the header | The socket is unreachable. The last known state stays on screen and polling retries automatically. |
-| `summaries off (no key)` | No key in `$OPENROUTER_API_KEY` or `~/.openrouter-key`. |
+| `summaries off (no key: $OPENROUTER_API_KEY)` (variable named depends on `--provider`) | No key found for the selected provider — its own env var, or `~/.openrouter-key` for OpenRouter. |
 | `summaries off` | You passed `--no-summaries`. |
 | `⚠ summary unavailable` on one agent | That agent's summary failed; the last successful one stays on screen beneath the error. Retries follow a 5s → 15s → 45s → 135s → 5m backoff. `r` forces an immediate retry. |
 | `herdr: …` notice in the header | herdr answered but not usefully — a protocol mismatch, say. Polling continues on the same schedule. |
+| `--model is required for <provider>` | The preset has no default model (`ollama`, `lmstudio`, `openai-compatible`, `anthropic-compatible`). Pass `--model` — the error names how to list what you have available. |
+| `--base-url is required for <provider>` | `openai-compatible` and `anthropic-compatible` have no default endpoint. Pass `--base-url`. |
+| Connection refused against a local endpoint | `ollama` or `lmstudio` is not running, or is on a different port than the preset's default. Start the server and confirm the port, or pass `--base-url`. |
+| `response truncated (finish_reason "length")` | The model spent its whole output budget on reasoning before writing any content. herdash already starts each provider at the lowest reasoning rung it accepts and escalates only on an explicit refusal; if it still happens, try a different model. Anthropic-wire providers report this as `stop_reason "max_tokens"` instead. |
 
 ## Development
 

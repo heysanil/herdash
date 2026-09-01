@@ -9,7 +9,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use super::{fmt_age, theme, wrap_to};
-use crate::app::App;
+use crate::app::{App, SummariesMode};
 use crate::summary::types::or_dash;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
@@ -129,9 +129,19 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 theme::dim(),
             )));
         }
+    } else if app.summaries == SummariesMode::OffByFlag {
+        // They turned summaries off on purpose; the fix is dropping the
+        // flag, not configuring a provider they may already have.
+        for l in wrap_to(
+            "Summaries are off (--no-summaries). Drop the flag to turn them back on.",
+            width,
+            3,
+        ) {
+            lines.push(Line::from(Span::styled(l, theme::dim())));
+        }
     } else if !app.summaries_enabled() {
         for l in wrap_to(
-            "Summaries are off. Set OPENROUTER_API_KEY or drop a key in ~/.openrouter-key.",
+            "Summaries are off. Set --provider and its API key env var (see --help).",
             width,
             3,
         ) {

@@ -25,7 +25,7 @@ use herdash::herdr::types::Snapshot;
 use herdash::orchestrator::{self, FLEET_COOLDOWN, FleetJob, FleetRequest, SummaryJob, Update};
 use herdash::space::{self, Claims};
 use herdash::summary::Summarizer;
-use herdash::summary::openrouter::OpenRouter;
+use herdash::summary::client::LlmClient;
 use herdash::summary::policy::Cfg;
 use herdash::ui;
 
@@ -44,7 +44,7 @@ const SIDEBAR_TOKEN: &str = "herdash";
 
 /// Ceiling on simultaneous summary calls.
 ///
-/// Without a bound, a fifty-agent session would fire fifty OpenRouter requests
+/// Without a bound, a fifty-agent session would fire fifty provider requests
 /// the moment it starts. Agents beyond the limit keep their latched triggers
 /// and are picked up on a later pass, so nothing is dropped — only deferred.
 const MAX_SUMMARY_TASKS: usize = 6;
@@ -52,7 +52,7 @@ const MAX_SUMMARY_TASKS: usize = 6;
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let settings = Settings::from_cli(&cli);
+    let settings = Settings::from_cli(&cli)?;
     let client = Client::new(settings.socket.clone());
 
     // Prove herdr is reachable before taking over the terminal, so the error
@@ -126,13 +126,16 @@ async fn run(
     }
 
     let summarizer: Option<Arc<dyn Summarizer>> = settings
-        .api_key
+        .provider
         .clone()
-        .map(|key| Arc::new(OpenRouter::new(key, settings.model.clone())) as Arc<dyn Summarizer>);
+        .map(|p| Arc::new(LlmClient::new(p)) as Arc<dyn Summarizer>);
 
     claim_space(&client, &settings).await;
 
     let mut app = App::new(settings.summaries);
+    if let Some(detail) = settings.summaries_detail.clone() {
+        app = app.with_summaries_detail(detail);
+    }
     app.apply_snapshot(&initial);
 
     let mut fleet_job = FleetJob::default();
