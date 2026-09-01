@@ -1,5 +1,6 @@
 //! LLM summarization of agent transcripts.
 
+pub mod anthropic;
 pub mod openai;
 pub mod openrouter;
 pub mod policy;
