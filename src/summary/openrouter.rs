@@ -233,6 +233,25 @@ pub fn parse_fleet_response(body: &str) -> Result<String> {
     Ok(content_of(body)?.trim().to_string())
 }
 
+/// Advance a cached reasoning rung. **Monotonic on purpose.**
+///
+/// Up to `MAX_SUMMARY_TASKS` workers share one cached rung. A worker that
+/// started at a low rung, was refused, and returns after another worker
+/// already escalated past it must not write its stale rung back — that makes
+/// the ladder oscillate and re-pay for a refused call on every lap. A late
+/// rejection is a no-op instead.
+///
+/// A free function so the invariant is testable without driving a race that
+/// only reproduces under specific interleavings.
+pub fn advance_rung(cache: &std::sync::atomic::AtomicU8, mode: ReasoningMode) {
+    let index = match mode {
+        ReasoningMode::Disabled => 0,
+        ReasoningMode::LowEffort => 1,
+        ReasoningMode::ProviderDefault => 2,
+    };
+    cache.fetch_max(index, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// OpenRouter-backed [`Summarizer`].
 pub struct OpenRouter {
     client: reqwest::Client,
@@ -276,13 +295,7 @@ impl OpenRouter {
     }
 
     fn set_reasoning_mode(&self, mode: ReasoningMode) {
-        let index = match mode {
-            ReasoningMode::Disabled => 0,
-            ReasoningMode::LowEffort => 1,
-            ReasoningMode::ProviderDefault => 2,
-        };
-        self.reasoning
-            .store(index, std::sync::atomic::Ordering::Relaxed);
+        advance_rung(&self.reasoning, mode);
     }
 
     async fn post(&self, body: Value) -> Result<String> {
