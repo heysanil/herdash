@@ -6,6 +6,11 @@ use std::time::Duration;
 use clap::Parser;
 
 use crate::app::SummariesMode;
+use crate::summary::provider::{KeyRequirement, ProviderId, ResolvedProvider, preset, same_origin};
+
+pub const DEFAULT_INTERVAL: u64 = 1;
+pub const DEFAULT_COOLDOWN: u64 = 45;
+pub const DEFAULT_LINES: u32 = 200;
 
 /// Where herdash takes its colors from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -20,25 +25,30 @@ pub enum ThemeSource {
 #[derive(Debug, Clone, Parser)]
 #[command(name = "herdash", version, about)]
 pub struct Cli {
-    /// Seconds between herdr snapshot polls.
-    #[arg(long, default_value_t = 1)]
-    pub interval: u64,
+    /// Seconds between herdr snapshot polls. [default: 1]
+    #[arg(long)]
+    pub interval: Option<u64>,
 
-    /// Minimum seconds between summaries for the same agent.
-    #[arg(long, default_value_t = 45)]
-    pub cooldown: u64,
+    /// Minimum seconds between summaries for the same agent. [default: 45]
+    #[arg(long)]
+    pub cooldown: Option<u64>,
 
-    /// OpenRouter model slug used for summaries.
-    ///
-    /// The default was chosen by `examples/bench.rs`; see `docs/benchmark.md`.
-    /// It is the only model measured at 100% accuracy on the attention
-    /// classification while also scoring in the top tier for prose quality.
-    #[arg(long, default_value = "openai/gpt-oss-120b")]
-    pub model: String,
+    /// Transcript lines requested from each agent. [default: 200]
+    #[arg(long)]
+    pub lines: Option<u32>,
 
-    /// Transcript lines requested from each agent.
-    #[arg(long, default_value_t = 200)]
-    pub lines: u32,
+    /// Backend preset. Sets the wire protocol and a default endpoint.
+    #[arg(long, value_enum)]
+    pub provider: Option<ProviderId>,
+
+    /// Override the provider's endpoint. OpenAI-style URLs include `/v1`;
+    /// Anthropic-style URLs do not.
+    #[arg(long)]
+    pub base_url: Option<String>,
+
+    /// Model name or slug, interpreted by the provider.
+    #[arg(long)]
+    pub model: Option<String>,
 
     /// Run as a pure status board with no external network egress.
     #[arg(long)]
@@ -83,24 +93,96 @@ pub fn resolve_socket(
     home.join(".config").join("herdr").join("herdr.sock")
 }
 
-/// Resolve the OpenRouter key: `$OPENROUTER_API_KEY`, then `~/.openrouter-key`.
+/// Resolve the API key for `id` at `base_url`.
 ///
-/// Returns `None` rather than failing — with no key herdash still runs as a
-/// status board, which is a legitimate zero-egress mode.
-pub fn resolve_api_key(env: &dyn Fn(&str) -> Option<String>, home: &Path) -> Option<String> {
-    if let Some(v) = env("OPENROUTER_API_KEY") {
+/// Order: `$HERDASH_API_KEY`, then the provider's own variable, then
+/// `~/.openrouter-key` for openrouter. Returns `None` rather than failing —
+/// a provider that needs no key is a legitimate configuration.
+///
+/// **Vendor keys are bound to the preset's own origin.** `--base-url` can
+/// point a vendor preset anywhere, and silently forwarding a real key to an
+/// unrelated host would turn a convenience into credential exfiltration.
+/// `HERDASH_API_KEY` is exempt: naming it is an explicit act for the run at
+/// hand.
+pub fn resolve_api_key(
+    id: ProviderId,
+    base_url: &str,
+    env: &dyn Fn(&str) -> Option<String>,
+    home: &Path,
+) -> Option<String> {
+    let non_empty = |v: String| {
         let v = v.trim().to_string();
-        if !v.is_empty() {
-            return Some(v);
-        }
+        (!v.is_empty()).then_some(v)
+    };
+    if let Some(v) = env("HERDASH_API_KEY").and_then(non_empty) {
+        return Some(v);
     }
-    let contents = std::fs::read_to_string(home.join(".openrouter-key")).ok()?;
-    let trimmed = contents.trim().to_string();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed)
+    let p = preset(id);
+    let on_own_origin = p.default_base_url.is_some_and(|d| same_origin(d, base_url));
+    if !on_own_origin {
+        return None;
     }
+    if let Some(v) = p.id.env_var().and_then(env).and_then(non_empty) {
+        return Some(v);
+    }
+    if id == ProviderId::Openrouter {
+        return std::fs::read_to_string(home.join(".openrouter-key"))
+            .ok()
+            .and_then(non_empty);
+    }
+    None
+}
+
+/// Build the provider from flags and the environment.
+///
+/// `Ok(None)` means `--no-summaries`. An `Err` is a configuration mistake
+/// worth exiting for, reported before the terminal is taken over.
+pub fn resolve_provider(
+    cli: &Cli,
+    env: &dyn Fn(&str) -> Option<String>,
+    home: &Path,
+) -> anyhow::Result<Option<ResolvedProvider>> {
+    if cli.no_summaries {
+        return Ok(None);
+    }
+    let id = cli.provider.unwrap_or(ProviderId::Openrouter);
+    let p = preset(id);
+
+    let base_url = cli
+        .base_url
+        .clone()
+        .or_else(|| p.default_base_url.map(str::to_string))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "--base-url is required for {}.\nExample: --base-url http://localhost:8000/v1",
+                id.as_str()
+            )
+        })?;
+
+    let model = cli
+        .model
+        .clone()
+        .or_else(|| p.default_model.map(str::to_string))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "--model is required for {}.\n{}",
+                id.as_str(),
+                id.model_hint()
+            )
+        })?;
+
+    Ok(Some(ResolvedProvider {
+        id,
+        dialect: p.dialect,
+        api_key: resolve_api_key(id, &base_url, env, home),
+        base_url,
+        model,
+    }))
+}
+
+/// Whether this provider still needs a key it does not have.
+pub fn needs_missing_key(p: &ResolvedProvider) -> bool {
+    preset(p.id).key == KeyRequirement::Required && p.api_key.is_none()
 }
 
 /// Bundle of resolved runtime settings.
@@ -109,8 +191,7 @@ pub struct Settings {
     pub socket: PathBuf,
     /// Distinguishes "you turned it off" from "no key found".
     pub summaries: SummariesMode,
-    pub api_key: Option<String>,
-    pub model: String,
+    pub provider: Option<ResolvedProvider>,
     pub interval: Duration,
     pub cooldown: Duration,
     pub lines: u32,
@@ -120,29 +201,24 @@ pub struct Settings {
 
 impl Settings {
     /// Build settings from parsed args and the real process environment.
-    pub fn from_cli(cli: &Cli) -> Self {
+    pub fn from_cli(cli: &Cli) -> anyhow::Result<Self> {
         let home = home_dir();
         let env = |k: &str| std::env::var(k).ok();
-        let api_key = if cli.no_summaries {
-            None
-        } else {
-            resolve_api_key(&env, &home)
-        };
+        let provider = resolve_provider(cli, &env, &home)?;
         let summaries = if cli.no_summaries {
             SummariesMode::OffByFlag
-        } else if api_key.is_some() {
-            SummariesMode::On
-        } else {
+        } else if provider.as_ref().is_some_and(needs_missing_key) {
             SummariesMode::OffNoKey
+        } else {
+            SummariesMode::On
         };
-        Self {
+        Ok(Self {
             socket: resolve_socket(cli.socket.as_deref(), &env, &home),
-            api_key,
             summaries,
-            model: cli.model.clone(),
-            interval: Duration::from_secs(cli.interval.max(1)),
-            cooldown: Duration::from_secs(cli.cooldown),
-            lines: cli.lines,
+            provider,
+            interval: Duration::from_secs(cli.interval.unwrap_or(DEFAULT_INTERVAL).max(1)),
+            cooldown: Duration::from_secs(cli.cooldown.unwrap_or(DEFAULT_COOLDOWN)),
+            lines: cli.lines.unwrap_or(DEFAULT_LINES),
             mouse: !cli.no_mouse,
             palette: match cli.theme {
                 ThemeSource::Ansi => crate::ui::palette::Palette::default(),
@@ -150,7 +226,7 @@ impl Settings {
                     &crate::ui::palette::Palette::herdr_config_path(&home),
                 ),
             },
-        }
+        })
     }
 
     /// Summaries run only when a key resolved and `--no-summaries` was absent.

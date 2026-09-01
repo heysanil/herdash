@@ -19,14 +19,13 @@ use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 
 use herdash::app::{Action, App, ConnState};
-use herdash::config::{Cli, Settings};
+use herdash::config::{Cli, Settings, needs_missing_key};
 use herdash::herdr::client::Client;
 use herdash::herdr::types::Snapshot;
 use herdash::orchestrator::{self, FLEET_COOLDOWN, FleetJob, FleetRequest, SummaryJob, Update};
 use herdash::summary::Summarizer;
 use herdash::summary::client::LlmClient;
 use herdash::summary::policy::Cfg;
-use herdash::summary::provider::{ProviderId, ResolvedProvider, preset};
 use herdash::ui;
 
 /// Redraw cadence, so ages and the spinner stay live.
@@ -42,7 +41,7 @@ const MAX_SUMMARY_TASKS: usize = 6;
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let settings = Settings::from_cli(&cli);
+    let settings = Settings::from_cli(&cli)?;
     let client = Client::new(settings.socket.clone());
 
     // Prove herdr is reachable before taking over the terminal, so the error
@@ -108,21 +107,14 @@ async fn run(
         tx.clone(),
     ));
 
-    // Stopgap: always OpenRouter until the next task wires up provider
-    // selection from `Settings`.
-    let summarizer: Option<Arc<dyn Summarizer>> = settings.api_key.clone().map(|key| {
-        let openrouter = preset(ProviderId::Openrouter);
-        Arc::new(LlmClient::new(ResolvedProvider {
-            id: ProviderId::Openrouter,
-            dialect: openrouter.dialect,
-            base_url: openrouter
-                .default_base_url
-                .expect("openrouter preset has a default base url")
-                .to_string(),
-            api_key: Some(key),
-            model: settings.model.clone(),
-        })) as Arc<dyn Summarizer>
-    });
+    // A provider that still needs a key it doesn't have must never reach the
+    // client, or every agent would show a failed summary instead of the
+    // dashboard's own "summaries off (no key)" note.
+    let summarizer: Option<Arc<dyn Summarizer>> = settings
+        .provider
+        .clone()
+        .filter(|p| !needs_missing_key(p))
+        .map(|p| Arc::new(LlmClient::new(p)) as Arc<dyn Summarizer>);
 
     let mut app = App::new(settings.summaries);
     app.apply_snapshot(&initial);
